@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { HttpError, requireStaffActor } from '../../actors.js';
 import { decodeCursorStrict, encodeCursor } from '../../cursor.js';
@@ -13,6 +14,48 @@ const patchExpectedGateSchema = z.object({
   passId: z.string().regex(UUID_RE),
   expectedGate: z.string().trim().min(1).max(80),
 }).strict();
+
+const resolveAccountabilitySchema = z.discriminatedUnion('action', [
+  z.object({
+    action: z.literal('record_verified_exit'),
+    passId: z.string().regex(UUID_RE),
+    exitTime: z.string().optional(),
+    gate: z.string().trim().min(1).max(80).optional(),
+    reason: z.string().trim().min(5).max(1000),
+    requestId: z.string().regex(UUID_RE).optional(),
+  }).strict(),
+  z.object({
+    action: z.literal('confirm_office_visit'),
+    passId: z.string().regex(UUID_RE),
+    arrivalTime: z.string().optional(),
+    verifiedTime: z.string().optional(),
+    reason: z.string().trim().min(5).max(1000),
+    requestId: z.string().regex(UUID_RE).optional(),
+  }).strict(),
+  z.object({
+    action: z.literal('mark_reviewed'),
+    passId: z.string().regex(UUID_RE),
+    reason: z.string().trim().min(5).max(1000).optional(),
+    notes: z.string().trim().min(5).max(1000).optional(),
+    requestId: z.string().regex(UUID_RE).optional(),
+  }).strict().refine((data) => Boolean((data.reason && data.reason.trim().length >= 5) || (data.notes && data.notes.trim().length >= 5)), {
+    message: 'Either reason or notes must be at least 5 characters',
+  }),
+  z.object({
+    action: z.literal('record_exception'),
+    passId: z.string().regex(UUID_RE),
+    exceptionType: z.enum([
+      'redirected',
+      'office_closed',
+      'cancelled_after_entry',
+      'cctv_verified',
+      'emergency_evacuation',
+      'other',
+    ]),
+    reason: z.string().trim().min(5).max(1000),
+    requestId: z.string().regex(UUID_RE).optional(),
+  }).strict(),
+]);
 
 function extractErrorDiagnostics(error: unknown): { code?: string; message: string; details?: string; hint?: string } {
   if (error instanceof Error) {
@@ -55,6 +98,11 @@ interface RawRecordPassRow {
   rejection_reason: string | null;
   gate: string | null;
   expected_gate?: string | null;
+  accountability_status?: string | null;
+  accountability_notes?: string | null;
+  accountability_resolved_at?: string | null;
+  accountability_resolved_by?: string | null;
+  exit_verification_type?: string | null;
   visitors: {
     full_name: string;
     purpose: string;
@@ -75,16 +123,34 @@ interface RawRecordPassRow {
   office_visits?: Array<{
     id: string;
     attendance_status: string;
+    confirmed_at?: string | null;
+    confirmed_by?: string | null;
+    attendance_verification_type?: string | null;
+    accountability_notes?: string | null;
     visit_type?: string;
     approval_status?: string;
-    offices?: { name: string } | null;
+    offices?: { id?: string; name: string; code?: string | null } | null;
   }> | {
     id: string;
     attendance_status: string;
+    confirmed_at?: string | null;
+    confirmed_by?: string | null;
+    attendance_verification_type?: string | null;
+    accountability_notes?: string | null;
     visit_type?: string;
     approval_status?: string;
-    offices?: { name: string } | null;
+    offices?: { id?: string; name: string; code?: string | null } | null;
   } | null;
+  visitor_accountability_resolutions?: Array<{
+    id: string;
+    resolution_type: string;
+    exception_type: string | null;
+    reason: string;
+    verified_event_time: string | null;
+    gate: string | null;
+    created_at: string;
+    actor_id: string;
+  }> | null;
 }
 
 interface RawOfflineRecordRow {
@@ -109,7 +175,7 @@ interface RawOfflineRecordRow {
   reconciled_at: string | null;
 }
 
-function mapPass(row: RawRecordPassRow) {
+function mapPass(row: RawRecordPassRow, closingHours = '17:00', nowMs = Date.now()) {
   const visitor = row.visitors;
   const evidenceList = visitor?.visitor_evidence ?? [];
   const photoId = evidenceList.find((e) => e.kind === 'photo')?.id ?? null;
@@ -117,9 +183,49 @@ function mapPass(row: RawRecordPassRow) {
 
   const officeVisit = Array.isArray(row.office_visits) ? row.office_visits[0] : row.office_visits;
   const destinationOffice = officeVisit?.offices?.name ?? null;
+  const destinationOfficeId = officeVisit?.offices?.id ?? null;
   const attendanceStatus = officeVisit?.attendance_status ?? null;
   const visitType = officeVisit?.visit_type ?? null;
   const approvalStatus = officeVisit?.approval_status ?? null;
+
+  // Accountability & Timeline Calculation
+  const visitDate = visitor?.visit_date || (row.valid_from ? row.valid_from.slice(0, 10) : null);
+  let closingDate: Date;
+  if (row.valid_until) {
+    closingDate = new Date(row.valid_until);
+  } else if (visitDate) {
+    closingDate = new Date(`${visitDate}T${closingHours}:00+08:00`);
+  } else {
+    closingDate = new Date();
+  }
+  const isPastClosing = nowMs >= closingDate.getTime();
+  const hasEntered = Boolean(row.time_in || row.entry_scanned_at || row.status === 'inside' || row.status === 'exited');
+  const hasExited = Boolean(row.time_out || row.status === 'exited');
+
+  // Rule: A visitor with no entry scan must not be classified as someone who failed to exit.
+  // Rule: After school closing time, an entry without an exit is flagged as No Recorded Exit.
+  const missingExit = Boolean(hasEntered && !hasExited && isPastClosing);
+  const overdueMinutes = missingExit ? Math.max(0, Math.round((nowMs - closingDate.getTime()) / 60000)) : 0;
+
+  // Rule: Destination office selected, entered campus, but arrival not recorded by closing time or upon exit.
+  const hasOffice = Boolean(destinationOffice && destinationOffice.trim() !== '' && destinationOffice.toLowerCase() !== 'general campus');
+  const officeConfirmed = Boolean(attendanceStatus === 'confirmed' || attendanceStatus === 'completed' || officeVisit?.confirmed_at);
+  const missingOffice = Boolean(hasEntered && hasOffice && !officeConfirmed && (isPastClosing || hasExited));
+
+  const bothMissing = Boolean(missingExit && missingOffice);
+  const isCompleted = Boolean(hasEntered && hasExited && (!hasOffice || officeConfirmed));
+
+  const rawResolutions = Array.isArray(row.visitor_accountability_resolutions) ? row.visitor_accountability_resolutions : [];
+  const resolutions = rawResolutions.map((r) => ({
+    id: r.id,
+    resolutionType: r.resolution_type,
+    exceptionType: r.exception_type,
+    reason: r.reason,
+    verifiedEventTime: r.verified_event_time,
+    gate: r.gate,
+    createdAt: r.created_at,
+    actorId: r.actor_id,
+  }));
 
   return {
     id: row.id,
@@ -139,7 +245,12 @@ function mapPass(row: RawRecordPassRow) {
     regionName: visitor?.psgc_region_name ?? null,
     arrivalMode: visitor?.arrival_mode ?? null,
     destinationOffice,
+    destinationOfficeId,
     attendanceStatus,
+    officeConfirmedAt: officeVisit?.confirmed_at ?? null,
+    officeConfirmedBy: officeVisit?.confirmed_by ?? null,
+    attendanceVerificationType: officeVisit?.attendance_verification_type ?? null,
+    officeAccountabilityNotes: officeVisit?.accountability_notes ?? null,
     visitType,
     approvalStatus,
     photoPublicId: photoId,
@@ -158,6 +269,22 @@ function mapPass(row: RawRecordPassRow) {
     rejectionReason: row.rejection_reason,
     gate: row.gate,
     expectedGate: row.expected_gate ?? null,
+    accountabilityStatus: row.accountability_status || 'pending',
+    accountabilityNotes: row.accountability_notes || null,
+    accountabilityResolvedAt: row.accountability_resolved_at || null,
+    accountabilityResolvedBy: row.accountability_resolved_by || null,
+    exitVerificationType: row.exit_verification_type || (hasExited ? 'scanner' : null),
+    officeVisitId: officeVisit?.id || null,
+    hasEntered,
+    hasExited,
+    isPastClosing,
+    missingExit,
+    missingOffice,
+    bothMissing,
+    isCompleted,
+    overdueMinutes,
+    expectedClosingTime: closingDate.toISOString(),
+    resolutions,
   };
 }
 
@@ -191,12 +318,15 @@ async function handleGet(request: Request): Promise<Response> {
 
   const url = new URL(request.url);
   const modeParam = (url.searchParams.get('mode') || 'standard').trim();
-  if (!['standard', 'offline', 'all'].includes(modeParam)) {
+  if (!['standard', 'offline', 'all', 'accountability'].includes(modeParam)) {
     return jsonResponse(400, { error: 'invalid_mode' });
   }
-  const mode = modeParam as 'standard' | 'offline' | 'all';
+  const mode = modeParam as 'standard' | 'offline' | 'all' | 'accountability';
 
   const statusParam = url.searchParams.get('status')?.trim();
+  const categoryParam = url.searchParams.get('category')?.trim();
+  const officeParam = url.searchParams.get('office')?.trim();
+  const reviewStatusParam = url.searchParams.get('reviewStatus')?.trim();
   const singleDateParam = url.searchParams.get('date')?.trim();
   const dateFromParam = url.searchParams.get('dateFrom')?.trim() || singleDateParam;
   const dateToParam = url.searchParams.get('dateTo')?.trim() || singleDateParam;
@@ -233,13 +363,25 @@ async function handleGet(request: Request): Promise<Response> {
     const { admin } = getServerSupabaseClients();
     await requireStaffActor(admin, token, ['admin', 'superadmin']);
 
+    // Fetch school operating hours and timezone configuration
+    const { data: settingsData } = await admin
+      .from('app_settings')
+      .select('working_hours_start, working_hours_end, timezone')
+      .eq('singleton', true)
+      .maybeSingle();
+
+    const closingHours = (settingsData?.working_hours_end || '17:00').slice(0, 5);
+    const openingHours = (settingsData?.working_hours_start || '08:00').slice(0, 5);
+    const timeZone = settingsData?.timezone || 'Asia/Manila';
+    const nowMs = Date.now();
+
     let passes: ReturnType<typeof mapPass>[] = [];
     let nextCursor: string | null = null;
     let hasMore = false;
     let totalCount = 0;
     let truncated = false;
 
-    if (mode === 'standard' || mode === 'all') {
+    if (mode === 'standard' || mode === 'all' || mode === 'accountability') {
       let query = admin
         .from('passes')
         .select(
@@ -261,6 +403,11 @@ async function handleGet(request: Request): Promise<Response> {
           rejection_reason,
           gate,
           expected_gate,
+          accountability_status,
+          accountability_notes,
+          accountability_resolved_at,
+          accountability_resolved_by,
+          exit_verification_type,
           visitors!inner (
             full_name,
             purpose,
@@ -284,11 +431,27 @@ async function handleGet(request: Request): Promise<Response> {
           office_visits (
             id,
             attendance_status,
+            confirmed_at,
+            confirmed_by,
+            attendance_verification_type,
+            accountability_notes,
             visit_type,
             approval_status,
             offices (
-              name
+              id,
+              name,
+              code
             )
+          ),
+          visitor_accountability_resolutions (
+            id,
+            resolution_type,
+            exception_type,
+            reason,
+            verified_event_time,
+            gate,
+            created_at,
+            actor_id
           )
         `,
           { count: 'exact' },
@@ -331,19 +494,79 @@ async function handleGet(request: Request): Promise<Response> {
       if (error) throw error;
 
       const rows = (rawRows ?? []) as unknown as RawRecordPassRow[];
+      const mappedRows = rows.map((r) => mapPass(r, closingHours, nowMs));
+
       if (exportAll) {
-        passes = rows.slice(0, EXPORT_MAX_ROWS).map(mapPass);
+        passes = mappedRows.slice(0, EXPORT_MAX_ROWS);
         totalCount = typeof count === 'number' ? count : passes.length;
         truncated = totalCount > EXPORT_MAX_ROWS;
       } else {
-        hasMore = rows.length > pageSize;
-        const returnRows = hasMore ? rows.slice(0, pageSize) : rows;
-        passes = returnRows.map(mapPass);
-        const lastRow = returnRows[returnRows.length - 1];
+        hasMore = mappedRows.length > pageSize;
+        const returnRows = hasMore ? mappedRows.slice(0, pageSize) : mappedRows;
+        passes = returnRows;
+        const lastRow = rows[returnRows.length - 1];
         nextCursor = hasMore && lastRow ? encodeCursor(lastRow.issued_at, lastRow.id) : null;
         totalCount = typeof count === 'number' ? count : passes.length;
       }
     }
+
+    // Compute Accountability Summary across passes (deduplicated by unique visitorId)
+    const uniqueVisitorIds = new Set<string>();
+    const completedVisitorIds = new Set<string>();
+    const missingExitVisitorIds = new Set<string>();
+    const missingOfficeVisitorIds = new Set<string>();
+    const requiringReviewVisitorIds = new Set<string>();
+    const reviewedVisitorIds = new Set<string>();
+
+    for (const p of passes) {
+      const vid = p.visitorId || p.id;
+      uniqueVisitorIds.add(vid);
+      if (p.isCompleted) completedVisitorIds.add(vid);
+      if (p.missingExit && p.accountabilityStatus === 'pending') missingExitVisitorIds.add(vid);
+      if (p.missingOffice && p.accountabilityStatus === 'pending') missingOfficeVisitorIds.add(vid);
+      if ((p.missingExit || p.missingOffice) && p.accountabilityStatus === 'pending') requiringReviewVisitorIds.add(vid);
+      if (p.accountabilityStatus && p.accountabilityStatus !== 'pending') reviewedVisitorIds.add(vid);
+    }
+
+    const accountabilitySummary = {
+      totalVisitors: uniqueVisitorIds.size,
+      completedVisits: completedVisitorIds.size,
+      missingExitCount: missingExitVisitorIds.size,
+      missingOfficeCount: missingOfficeVisitorIds.size,
+      requiringReviewCount: requiringReviewVisitorIds.size,
+      reviewedCount: reviewedVisitorIds.size,
+      schoolClosingTime: closingHours,
+      schoolOpeningTime: openingHours,
+      timezone: timeZone,
+    };
+
+    // Filter passes by category if explicitly requested
+    if (categoryParam) {
+      if (categoryParam === 'campus_exit') {
+        passes = passes.filter((p) => p.missingExit);
+      } else if (categoryParam === 'office_visit') {
+        passes = passes.filter((p) => p.missingOffice);
+      } else if (categoryParam === 'completed') {
+        passes = passes.filter((p) => p.isCompleted);
+      } else if (categoryParam === 'requiring_review') {
+        passes = passes.filter((p) => (p.missingExit || p.missingOffice) && p.accountabilityStatus === 'pending');
+      }
+    }
+
+    // Filter passes by office if specified
+    if (officeParam && officeParam !== 'all') {
+      passes = passes.filter((p) => p.destinationOffice?.toLowerCase() === officeParam.toLowerCase() || p.destinationOfficeId === officeParam);
+    }
+
+    // Filter passes by review status if specified
+    if (reviewStatusParam && reviewStatusParam !== 'all') {
+      passes = passes.filter((p) => p.accountabilityStatus === reviewStatusParam);
+    }
+
+    let offlineRecords: ReturnType<typeof mapOfflineRecord>[] = [];
+    let offlineNextCursor: string | null = null;
+    let offlineHasMore = false;
+    let offlineTotalCount = 0;
 
     if (mode === 'offline' || mode === 'all') {
       let offlineQuery = admin
@@ -398,45 +621,34 @@ async function handleGet(request: Request): Promise<Response> {
         }
       }
 
-      offlineQuery = offlineQuery.limit(exportAll ? EXPORT_MAX_ROWS : pageSize + 1);
-      const { data: rawOfflineRows, count: offlineCount, error: offlineErr } = await offlineQuery;
-      if (offlineErr) throw offlineErr;
+      offlineQuery = offlineQuery.limit(pageSize + 1);
+
+      const { data: rawOfflineRows, count: offlineCount, error: offlineError } = await offlineQuery;
+      if (offlineError) throw offlineError;
 
       const offlineRows = (rawOfflineRows ?? []) as unknown as RawOfflineRecordRow[];
-      const offlineHasMore = exportAll ? false : offlineRows.length > pageSize;
-      const returnOffline = exportAll
-        ? offlineRows.slice(0, EXPORT_MAX_ROWS)
-        : (offlineHasMore ? offlineRows.slice(0, pageSize) : offlineRows);
-      const offlineRecords = returnOffline.map(mapOfflineRecord);
-      const lastOffline = returnOffline[returnOffline.length - 1];
-      const offlineNextCursor = offlineHasMore && lastOffline
-        ? encodeCursor(lastOffline.local_recorded_at, lastOffline.id)
-        : null;
-      const offlineTotalCount = typeof offlineCount === 'number' ? offlineCount : offlineRecords.length;
-      const offlineTruncated = exportAll && offlineTotalCount > EXPORT_MAX_ROWS;
-
-      return jsonResponse(200, {
-        mode,
-        passes,
-        nextCursor,
-        hasMore,
-        totalCount,
-        truncated: truncated || offlineTruncated,
-        offlineClassification: 'OFFLINE MODE RECORDED',
-        offlineRecords,
-        offlineNextCursor,
-        offlineHasMore,
-        offlineTotalCount,
-      });
+      offlineHasMore = offlineRows.length > pageSize;
+      const returnOfflineRows = offlineHasMore ? offlineRows.slice(0, pageSize) : offlineRows;
+      offlineRecords = returnOfflineRows.map(mapOfflineRecord);
+      const lastOfflineRow = returnOfflineRows[returnOfflineRows.length - 1];
+      offlineNextCursor =
+        offlineHasMore && lastOfflineRow
+          ? encodeCursor(lastOfflineRow.local_recorded_at, lastOfflineRow.id)
+          : null;
+      offlineTotalCount = typeof offlineCount === 'number' ? offlineCount : offlineRecords.length;
     }
 
     return jsonResponse(200, {
-      mode,
       passes,
-      nextCursor,
+      total: totalCount,
       hasMore,
-      totalCount,
+      nextCursor,
       truncated,
+      accountabilitySummary,
+      offlineRecords,
+      offlineTotal: offlineTotalCount,
+      offlineHasMore,
+      offlineNextCursor,
     });
   } catch (error) {
     if (error instanceof HttpError) return jsonResponse(error.status, { error: error.code });
@@ -467,14 +679,80 @@ async function handlePatch(request: Request): Promise<Response> {
   }
 }
 
+async function handlePost(request: Request): Promise<Response> {
+  const token = readBearerToken(request);
+  if (!token) return jsonResponse(401, { error: 'authentication_required' });
+
+  const body = await request.json().catch(() => null);
+  const parsed = resolveAccountabilitySchema.safeParse(body);
+  if (!parsed.success) {
+    return jsonResponse(400, {
+      error: 'invalid_resolution_request',
+      message: 'Request payload failed schema validation.',
+      details: parsed.error.issues,
+    });
+  }
+
+  try {
+    const { admin } = getServerSupabaseClients();
+    // Super Admin authorization strictly enforced on resolution mutations
+    const actor = await requireStaffActor(admin, token, ['superadmin']);
+    const clientRequestId = parsed.data.requestId || randomUUID();
+
+    const payload = parsed.data;
+    const eventTime =
+      payload.action === 'record_verified_exit' && payload.exitTime
+        ? payload.exitTime
+        : payload.action === 'confirm_office_visit' && (payload.arrivalTime || payload.verifiedTime)
+        ? (payload.arrivalTime || payload.verifiedTime)
+        : null;
+
+    const requestedReason =
+      payload.action === 'mark_reviewed'
+        ? (payload.reason || payload.notes || '')
+        : payload.reason;
+
+    const exceptionType = payload.action === 'record_exception' ? payload.exceptionType : null;
+    const gate = payload.action === 'record_verified_exit' ? payload.gate || null : null;
+
+    const { data, error } = await admin.schema('api').rpc('resolve_visitor_accountability', {
+      requested_actor_id: actor.id,
+      requested_pass_id: payload.passId,
+      requested_action: payload.action,
+      requested_reason: requestedReason,
+      requested_event_time: eventTime,
+      requested_exception_type: exceptionType,
+      requested_gate: gate,
+      requested_request_id: clientRequestId,
+    });
+
+    if (error) {
+      const code = (error as { code?: string }).code;
+      const msg = String(error.message || '');
+      if (code === '22023') return jsonResponse(400, { error: msg || 'invalid_request' });
+      if (code === '42501') return jsonResponse(403, { error: msg || 'forbidden' });
+      throw error;
+    }
+
+    return jsonResponse(200, data);
+  } catch (error) {
+    if (error instanceof HttpError) return jsonResponse(error.status, { error: error.code });
+    console.error('Visitor accountability resolution failed.', error instanceof Error ? error.message : 'unknown_error');
+    return jsonResponse(500, { error: 'resolution_failed' });
+  }
+}
+
 async function handleRequest(request: Request): Promise<Response> {
   if (request.method === 'GET') {
     return handleGet(request);
   }
+  if (request.method === 'POST') {
+    return handlePost(request);
+  }
   if (request.method === 'PATCH') {
     return handlePatch(request);
   }
-  return jsonResponse(405, { error: 'method_not_allowed' }, { Allow: 'GET, PATCH' });
+  return jsonResponse(405, { error: 'method_not_allowed' }, { Allow: 'GET, POST, PATCH' });
 }
 
 export { handleRequest };

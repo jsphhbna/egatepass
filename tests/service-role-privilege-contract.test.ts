@@ -66,6 +66,7 @@ describe('Service Role Least-Privilege Architecture Contract', () => {
       'upload_intents',
       'visit_events',
       'visit_vehicle_declarations',
+      'visitor_accountability_resolutions',
       'visitor_evidence',
       'visitors',
     ].sort();
