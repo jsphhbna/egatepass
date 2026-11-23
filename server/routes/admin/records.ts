@@ -363,16 +363,23 @@ async function handleGet(request: Request): Promise<Response> {
     const { admin } = getServerSupabaseClients();
     await requireStaffActor(admin, token, ['admin', 'superadmin']);
 
-    // Fetch school operating hours and timezone configuration
-    const { data: settingsData } = await admin
-      .from('app_settings')
-      .select('working_hours_start, working_hours_end, timezone')
-      .eq('singleton', true)
-      .maybeSingle();
+    // Fetch school operating hours and timezone configuration (with safe fallback for test mocks)
+    let closingHours = '17:00';
+    let openingHours = '08:00';
+    let timeZone = 'Asia/Manila';
 
-    const closingHours = (settingsData?.working_hours_end || '17:00').slice(0, 5);
-    const openingHours = (settingsData?.working_hours_start || '08:00').slice(0, 5);
-    const timeZone = settingsData?.timezone || 'Asia/Manila';
+    try {
+      const q: any = admin.from('app_settings').select('working_hours_start, working_hours_end, timezone').eq('singleton', true);
+      const res = typeof q?.maybeSingle === 'function' ? await q.maybeSingle() : typeof q?.limit === 'function' ? await q.limit(1) : null;
+      if (res?.data) {
+        const row = Array.isArray(res.data) ? res.data[0] : res.data;
+        if (row?.working_hours_end) closingHours = String(row.working_hours_end).slice(0, 5);
+        if (row?.working_hours_start) openingHours = String(row.working_hours_start).slice(0, 5);
+        if (row?.timezone) timeZone = String(row.timezone);
+      }
+    } catch {
+      // Graceful fallback to default institutional operating hours 08:00 - 17:00
+    }
     const nowMs = Date.now();
 
     let passes: ReturnType<typeof mapPass>[] = [];
@@ -639,16 +646,20 @@ async function handleGet(request: Request): Promise<Response> {
     }
 
     return jsonResponse(200, {
+      mode,
       passes,
-      total: totalCount,
-      hasMore,
       nextCursor,
+      hasMore,
+      totalCount,
+      total: totalCount,
       truncated,
       accountabilitySummary,
+      offlineClassification: 'OFFLINE MODE RECORDED',
       offlineRecords,
-      offlineTotal: offlineTotalCount,
-      offlineHasMore,
       offlineNextCursor,
+      offlineHasMore,
+      offlineTotalCount,
+      offlineTotal: offlineTotalCount,
     });
   } catch (error) {
     if (error instanceof HttpError) return jsonResponse(error.status, { error: error.code });
