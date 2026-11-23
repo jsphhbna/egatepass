@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { HttpError, requireStaffActor } from '../../actors.js';
 import { decodeCursorStrict, encodeCursor } from '../../cursor.js';
 import { jsonResponse, readBearerToken } from '../../http.js';
-import { resolveVisitorAccountability } from '../../lib/accountability.js';
+import { resolveVisitorAccountability, getAccountabilitySummary } from '../../lib/accountability.js';
 import { assignPassExpectedGate } from '../../lib/office.js';
 import { getServerSupabaseClients } from '../../supabase.js';
 
@@ -130,7 +130,7 @@ interface RawRecordPassRow {
     accountability_notes?: string | null;
     visit_type?: string;
     approval_status?: string;
-    offices?: { id?: string; name: string; code?: string | null } | null;
+    offices?: { id?: string; name: string } | null;
   }> | {
     id: string;
     attendance_status: string;
@@ -140,7 +140,7 @@ interface RawRecordPassRow {
     accountability_notes?: string | null;
     visit_type?: string;
     approval_status?: string;
-    offices?: { id?: string; name: string; code?: string | null } | null;
+    offices?: { id?: string; name: string } | null;
   } | null;
   visitor_accountability_resolutions?: Array<{
     id: string;
@@ -362,7 +362,7 @@ async function handleGet(request: Request): Promise<Response> {
       return jsonResponse(400, { error: 'invalid_cursor' });
     }
     const { admin } = getServerSupabaseClients();
-    await requireStaffActor(admin, token, ['admin', 'superadmin']);
+    const actor = await requireStaffActor(admin, token, ['admin', 'superadmin']);
 
     // Fetch school operating hours and timezone configuration (with safe fallback for test mocks)
     let closingHours = '17:00';
@@ -447,8 +447,7 @@ async function handleGet(request: Request): Promise<Response> {
             approval_status,
             offices (
               id,
-              name,
-              code
+              name
             )
           ),
           visitor_accountability_resolutions (
@@ -484,7 +483,43 @@ async function handleGet(request: Request): Promise<Response> {
       }
 
       if (searchParam) {
-        query = query.ilike('visitors.full_name', `%${searchParam}%`);
+        const cleanedSearch = searchParam.replace(/[,()]/g, ' ').trim();
+        if (cleanedSearch) {
+          const digits = cleanedSearch.replace(/\D/g, '');
+          const orConditions = [
+            `full_name.ilike.%${cleanedSearch}%`,
+            `purpose.ilike.%${cleanedSearch}%`,
+          ];
+          if (digits.length >= 4) {
+            orConditions.push(`contact_number.ilike.%${digits}%`);
+            if (digits.startsWith('09') && digits.length >= 5) {
+              orConditions.push(`contact_number.ilike.%+63${digits.slice(1)}%`);
+            } else if (digits.startsWith('639') && digits.length >= 6) {
+              orConditions.push(`contact_number.ilike.%0${digits.slice(2)}%`);
+            }
+          }
+          query = query.or(orConditions.join(','), { referencedTable: 'visitors' });
+        }
+      }
+
+      if (reviewStatusParam && reviewStatusParam !== 'all') {
+        query = query.eq('accountability_status', reviewStatusParam);
+      }
+
+      if (categoryParam) {
+        if (categoryParam === 'campus_exit') {
+          query = query.or('time_in.not.is.null,entry_scanned_at.not.is.null,status.in.(inside,exited)').is('time_out', null).neq('status', 'exited');
+        } else if (categoryParam === 'completed') {
+          query = query.or('status.eq.exited,time_out.not.is.null');
+        } else if (categoryParam === 'missing_timeout') {
+          query = query.not('time_in', 'is', null).is('time_out', null);
+        } else if (categoryParam === 'currently_inside') {
+          query = query.or('status.eq.inside,and(time_in.not.is.null,time_out.is.null)');
+        } else if (categoryParam === 'approved_no_arrival') {
+          query = query.in('status', ['issued', 'approved']).is('time_in', null).is('entry_scanned_at', null);
+        } else if (categoryParam === 'requiring_review') {
+          query = query.eq('accountability_status', 'pending');
+        }
       }
 
       if (cursor) {
@@ -518,35 +553,52 @@ async function handleGet(request: Request): Promise<Response> {
       }
     }
 
-    // Compute Accountability Summary across passes (deduplicated by unique visitorId)
-    const uniqueVisitorIds = new Set<string>();
-    const completedVisitorIds = new Set<string>();
-    const missingExitVisitorIds = new Set<string>();
-    const missingOfficeVisitorIds = new Set<string>();
-    const requiringReviewVisitorIds = new Set<string>();
-    const reviewedVisitorIds = new Set<string>();
-
-    for (const p of passes) {
-      const vid = p.visitorId || p.id;
-      uniqueVisitorIds.add(vid);
-      if (p.isCompleted) completedVisitorIds.add(vid);
-      if (p.missingExit && p.accountabilityStatus === 'pending') missingExitVisitorIds.add(vid);
-      if (p.missingOffice && p.accountabilityStatus === 'pending') missingOfficeVisitorIds.add(vid);
-      if ((p.missingExit || p.missingOffice) && p.accountabilityStatus === 'pending') requiringReviewVisitorIds.add(vid);
-      if (p.accountabilityStatus && p.accountabilityStatus !== 'pending') reviewedVisitorIds.add(vid);
+    // Compute Authoritative Accountability Summary across full date range
+    let accountabilitySummary: any = null;
+    try {
+      const summaryRpcRes = await getAccountabilitySummary(admin, {
+        actorId: actor.id,
+        dateFrom: dateFromParam,
+        dateTo: dateToParam,
+        closingHours,
+      });
+      if (!summaryRpcRes.error && summaryRpcRes.data) {
+        accountabilitySummary = summaryRpcRes.data;
+      }
+    } catch {
+      // Fallback to in-memory computation if RPC is unavailable
     }
 
-    const accountabilitySummary = {
-      totalVisitors: uniqueVisitorIds.size,
-      completedVisits: completedVisitorIds.size,
-      missingExitCount: missingExitVisitorIds.size,
-      missingOfficeCount: missingOfficeVisitorIds.size,
-      requiringReviewCount: requiringReviewVisitorIds.size,
-      reviewedCount: reviewedVisitorIds.size,
-      schoolClosingTime: closingHours,
-      schoolOpeningTime: openingHours,
-      timezone: timeZone,
-    };
+    if (!accountabilitySummary) {
+      const uniqueVisitorIds = new Set<string>();
+      const completedVisitorIds = new Set<string>();
+      const missingExitVisitorIds = new Set<string>();
+      const missingOfficeVisitorIds = new Set<string>();
+      const requiringReviewVisitorIds = new Set<string>();
+      const reviewedVisitorIds = new Set<string>();
+
+      for (const p of passes) {
+        const vid = p.visitorId || p.id;
+        uniqueVisitorIds.add(vid);
+        if (p.isCompleted) completedVisitorIds.add(vid);
+        if (p.missingExit && p.accountabilityStatus === 'pending') missingExitVisitorIds.add(vid);
+        if (p.missingOffice && p.accountabilityStatus === 'pending') missingOfficeVisitorIds.add(vid);
+        if ((p.missingExit || p.missingOffice) && p.accountabilityStatus === 'pending') requiringReviewVisitorIds.add(vid);
+        if (p.accountabilityStatus && p.accountabilityStatus !== 'pending') reviewedVisitorIds.add(vid);
+      }
+
+      accountabilitySummary = {
+        totalVisitors: uniqueVisitorIds.size,
+        completedVisits: completedVisitorIds.size,
+        missingExitCount: missingExitVisitorIds.size,
+        missingOfficeCount: missingOfficeVisitorIds.size,
+        requiringReviewCount: requiringReviewVisitorIds.size,
+        reviewedCount: reviewedVisitorIds.size,
+        schoolClosingTime: closingHours,
+        schoolOpeningTime: openingHours,
+        timezone: timeZone,
+      };
+    }
 
     // Filter passes by category if explicitly requested
     if (categoryParam) {
@@ -558,6 +610,12 @@ async function handleGet(request: Request): Promise<Response> {
         passes = passes.filter((p) => p.isCompleted);
       } else if (categoryParam === 'requiring_review') {
         passes = passes.filter((p) => (p.missingExit || p.missingOffice) && p.accountabilityStatus === 'pending');
+      } else if (categoryParam === 'missing_timeout') {
+        passes = passes.filter((p) => p.timeIn != null && p.timeOut == null);
+      } else if (categoryParam === 'currently_inside') {
+        passes = passes.filter((p) => p.status === 'inside' || (p.timeIn != null && p.timeOut == null));
+      } else if (categoryParam === 'approved_no_arrival') {
+        passes = passes.filter((p) => (p.status === 'issued' || p.approvalStatus === 'approved') && p.timeIn == null);
       }
     }
 
@@ -616,7 +674,12 @@ async function handleGet(request: Request): Promise<Response> {
         offlineQuery = offlineQuery.lte('local_recorded_at', `${dateToParam}T23:59:59.999+08:00`);
       }
       if (searchParam) {
-        offlineQuery = offlineQuery.ilike('visitor_full_name', `%${searchParam}%`);
+        const cleanedSearch = searchParam.replace(/[,()]/g, ' ').trim();
+        if (cleanedSearch) {
+          offlineQuery = offlineQuery.or(
+            `visitor_full_name.ilike.%${cleanedSearch}%,purpose.ilike.%${cleanedSearch}%,declared_address.ilike.%${cleanedSearch}%,destination_office_name_snapshot.ilike.%${cleanedSearch}%`,
+          );
+        }
       }
       if (offlineCursor) {
         const decodedOffline = decodeCursorStrict(offlineCursor, { idType: 'uuid' })!;

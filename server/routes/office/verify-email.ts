@@ -1,11 +1,11 @@
-import { randomInt, createHash, createHmac, randomBytes } from 'node:crypto';
+import { randomInt, createHash, createHmac } from 'node:crypto';
 import { z } from 'zod';
 import { getServerSupabaseClients } from '../../supabase.js';
 import { getVerifiedSessionContext, HttpError } from '../../actors.js';
 import { jsonResponse, readBearerToken } from '../../http.js';
-import { sendResendEmail } from '../../email.js';
+import { sendResendEmail, EmailDeliveryError } from '../../email.js';
 import { renderVerificationCodeEmail } from '../../templates/index.js';
-import { getOfficeTokenSecret } from '../../lib/office.js';
+import { getOfficeTokenSecret, createEmailVerificationProofToken } from '../../lib/office.js';
 import { getTrustedClientIp } from '../../lib/clientIp.js';
 
 const emailRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
@@ -94,11 +94,30 @@ export async function handleRequest(request: Request): Promise<Response> {
       expiresInMinutes: 15,
     });
 
-    await sendResendEmail({
-      to: normalizedEmail,
-      subject: 'EARIST E-GatePass Verification Code',
-      html: emailHtml,
-    });
+    try {
+      await sendResendEmail({
+        to: normalizedEmail,
+        subject: 'EARIST E-GatePass Verification Code',
+        html: emailHtml,
+      });
+    } catch (sendErr) {
+      console.error('Failed to dispatch verification email:', sendErr);
+      const isConfigError =
+        sendErr instanceof EmailDeliveryError &&
+        (sendErr.code === 'email_service_unconfigured' ||
+          sendErr.code === 'email_sender_unconfigured' ||
+          sendErr.code === 'email_sender_invalid');
+      if (isConfigError) {
+        return jsonResponse(503, {
+          error: 'email_service_unconfigured',
+          message: 'Email service is currently unavailable. Please try again later or register as walk-in.',
+        });
+      }
+      return jsonResponse(502, {
+        error: 'email_delivery_failed',
+        message: 'Could not deliver verification code to this email address. Please verify your email address.',
+      });
+    }
 
     return jsonResponse(200, {
       ok: true,
@@ -140,9 +159,9 @@ export async function handleRequest(request: Request): Promise<Response> {
       });
     }
 
-    // Generate an opaque random 32-byte hex token (64 hex characters)
-    const rawProofToken = randomBytes(32).toString('hex');
-    const proofDigest = createHash('sha256').update(rawProofToken).digest('hex');
+    // Generate HMAC token matching server/lib/office.ts and verifyEmailVerificationProofToken
+    const hmacProofToken = createEmailVerificationProofToken(normalizedEmail, session.user.id);
+    const proofDigest = createHash('sha256').update(hmacProofToken).digest('hex');
     const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString(); // 1 hour TTL
 
     // Store proof digest in office_visit_verification_proofs
@@ -166,8 +185,8 @@ export async function handleRequest(request: Request): Promise<Response> {
     return jsonResponse(200, {
       ok: true,
       email: normalizedEmail,
-      proofToken: rawProofToken,
-      emailVerificationToken: rawProofToken,
+      proofToken: hmacProofToken,
+      emailVerificationToken: hmacProofToken,
       message: 'Email verified successfully.',
     });
   }
