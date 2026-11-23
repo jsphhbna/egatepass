@@ -265,6 +265,12 @@ export const SERVICE_ROLE_TABLE_CONTRACT: Record<string, ServerTablePrivilegeCon
     forbiddenPrivileges: ['UPDATE', 'DELETE'],
     justification: 'Server logs inbound/outbound SMS activity and queries SMS logs for admin audit feed and daily rate cap calculations. UPDATE/DELETE are forbidden to preserve audit trail.',
   },
+  visitor_accountability_resolutions: {
+    table: 'visitor_accountability_resolutions',
+    allowedPrivileges: ['SELECT', 'INSERT'],
+    forbiddenPrivileges: ['UPDATE', 'DELETE'],
+    justification: 'Server reads accountability resolutions for visitor reports and audits. Mutations are restricted to api.resolve_visitor_accountability RPC to preserve audit immutability.',
+  },
 };
 
 /**
@@ -297,6 +303,8 @@ export const SERVER_DIRECT_TABLE_OPERATIONS: DirectServerTableOperation[] = [
   { file: 'server/routes/admin/holds.ts', table: 'incident_holds', operations: ['SELECT'], purpose: 'List incident holds' },
   { file: 'server/routes/admin/holds.ts', table: 'passes', operations: ['SELECT'], purpose: 'Lookup visitor_id for hold target' },
   { file: 'server/routes/admin/records.ts', table: 'passes', operations: ['SELECT'], purpose: 'Search and paginate pass history' },
+  { file: 'server/routes/admin/records.ts', table: 'visitor_accountability_resolutions', operations: ['SELECT'], purpose: 'Read visitor accountability resolution audit trail' },
+  { file: 'server/routes/admin/records.ts', table: 'app_settings', operations: ['SELECT'], purpose: 'Read operating hours and timezone for accountability closing calculation' },
   { file: 'server/routes/admin/retention-maintenance.ts', table: 'app_settings', operations: ['SELECT'], purpose: 'Read retention periods' },
   { file: 'server/routes/admin/retention-maintenance.ts', table: 'audit_events', operations: ['SELECT', 'INSERT', 'DELETE'], purpose: 'Audit retention queries, purge execution, and logging' },
   { file: 'server/routes/admin/retention-maintenance.ts', table: 'maintenance_state', operations: ['SELECT', 'UPSERT'], purpose: 'Track evidence purge job cursor' },

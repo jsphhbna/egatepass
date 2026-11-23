@@ -1,7 +1,7 @@
 import { useAuth } from '@/hooks/useAuth';
 import { formatManilaDateTime, formatManilaTime, formatManilaIso, formatManilaFileTimestamp, getManilaDatePresetRange, getManilaDateString, type DatePresetKey } from '@/lib/manilaTime';
 import { getActiveIncidentHoldsForRecord, createIncidentHold, releaseIncidentHold, type IncidentHold } from '@/services/incidentHold';
-import { AlertTriangle, ClipboardCheck, Download, Eye, MapPin, Printer, ShieldAlert, ShieldCheck, RefreshCw } from 'lucide-react';
+import { AlertTriangle, ClipboardCheck, Download, Eye, MapPin, Printer, ShieldAlert, ShieldCheck, RefreshCw, Clock, Check } from 'lucide-react';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Card, Input, Select, Button, DataTable, DataTableHead, DataTableRow, DataTableCell, Modal, StatusBadge, TableSkeletonRows } from '@/components/ui';
@@ -31,12 +31,40 @@ interface GatePassWithId extends GatePass {
   provinceName?: string | null;
   regionName?: string | null;
   destinationOffice?: string | null;
+  destinationOfficeId?: string | null;
   attendanceStatus?: string | null;
   visitType?: string | null;
   approvalStatus?: string | null;
   gender?: string | null;
   visitDate?: string | null;
   arrivalMode?: string | null;
+  accountabilityStatus?: 'pending' | 'resolved' | 'reviewed' | 'exception' | string;
+  accountabilityNotes?: string | null;
+  accountabilityResolvedAt?: string | null;
+  accountabilityResolvedBy?: string | null;
+  exitVerificationType?: string | null;
+  attendanceVerificationType?: string | null;
+  officeAccountabilityNotes?: string | null;
+  officeVisitId?: string | null;
+  hasEntered?: boolean;
+  hasExited?: boolean;
+  isPastClosing?: boolean;
+  missingExit?: boolean;
+  missingOffice?: boolean;
+  bothMissing?: boolean;
+  isCompleted?: boolean;
+  overdueMinutes?: number;
+  expectedClosingTime?: string | null;
+  resolutions?: Array<{
+    id: string;
+    resolutionType: string;
+    exceptionType?: string | null;
+    reason: string;
+    verifiedEventTime?: string | null;
+    gate?: string | null;
+    createdAt: string;
+    actorId?: string | null;
+  }>;
 }
 
 interface SerializedRecordPass {
@@ -57,6 +85,7 @@ interface SerializedRecordPass {
   regionName?: string | null;
   arrivalMode?: string | null;
   destinationOffice?: string | null;
+  destinationOfficeId?: string | null;
   attendanceStatus?: string | null;
   visitType?: string | null;
   approvalStatus?: string | null;
@@ -76,6 +105,33 @@ interface SerializedRecordPass {
   rejectionReason: string | null;
   gate: string | null;
   expectedGate?: string | null;
+  accountabilityStatus?: string;
+  accountabilityNotes?: string | null;
+  accountabilityResolvedAt?: string | null;
+  accountabilityResolvedBy?: string | null;
+  exitVerificationType?: string | null;
+  attendanceVerificationType?: string | null;
+  officeAccountabilityNotes?: string | null;
+  officeVisitId?: string | null;
+  hasEntered?: boolean;
+  hasExited?: boolean;
+  isPastClosing?: boolean;
+  missingExit?: boolean;
+  missingOffice?: boolean;
+  bothMissing?: boolean;
+  isCompleted?: boolean;
+  overdueMinutes?: number;
+  expectedClosingTime?: string | null;
+  resolutions?: Array<{
+    id: string;
+    resolutionType: string;
+    exceptionType?: string | null;
+    reason: string;
+    verifiedEventTime?: string | null;
+    gate?: string | null;
+    createdAt: string;
+    actorId?: string | null;
+  }>;
 }
 
 interface EmergencyOfflineRecord {
@@ -158,6 +214,24 @@ export function deserializeRecordPass(p: SerializedRecordPass): GatePassWithId {
     rejectionReason: p.rejectionReason,
     gate: p.gate,
     expectedGate: p.expectedGate ?? null,
+    accountabilityStatus: p.accountabilityStatus ?? 'pending',
+    accountabilityNotes: p.accountabilityNotes ?? null,
+    accountabilityResolvedAt: p.accountabilityResolvedAt ?? null,
+    accountabilityResolvedBy: p.accountabilityResolvedBy ?? null,
+    exitVerificationType: p.exitVerificationType ?? null,
+    attendanceVerificationType: p.attendanceVerificationType ?? null,
+    officeAccountabilityNotes: p.officeAccountabilityNotes ?? null,
+    officeVisitId: p.officeVisitId ?? null,
+    hasEntered: Boolean(p.hasEntered),
+    hasExited: Boolean(p.hasExited),
+    isPastClosing: Boolean(p.isPastClosing),
+    missingExit: Boolean(p.missingExit),
+    missingOffice: Boolean(p.missingOffice),
+    bothMissing: Boolean(p.bothMissing),
+    isCompleted: Boolean(p.isCompleted),
+    overdueMinutes: p.overdueMinutes ?? 0,
+    expectedClosingTime: p.expectedClosingTime ?? null,
+    resolutions: p.resolutions ?? [],
   };
 }
 
@@ -921,7 +995,7 @@ export function AdminRecords() {
       </div>
 
       {isReportsTab ? (
-        <VisitorReportsView onSelectPass={handleSelectPass} />
+        <VisitorReportsView onSelectPass={handleSelectPass} userRole={role} />
       ) : (
         <>
           {exportTruncatedNotice && (
@@ -1645,6 +1719,10 @@ function VerificationImage({ title, publicId, emptyText = 'Image unavailable' }:
 
 type ReportCategory =
   | 'all'
+  | 'campus_exit'
+  | 'office_visit'
+  | 'completed'
+  | 'requiring_review'
   | 'missing_timeout'
   | 'currently_inside'
   | 'exited_unconfirmed'
@@ -1653,21 +1731,78 @@ type ReportCategory =
 
 interface VisitorReportsViewProps {
   onSelectPass: (pass: GatePassWithId) => void;
+  userRole?: string | null;
 }
 
-function VisitorReportsView({ onSelectPass }: VisitorReportsViewProps) {
+interface AccountabilitySummaryData {
+  totalVisitors: number;
+  completedVisits: number;
+  missingExitCount: number;
+  missingOfficeCount: number;
+  requiringReviewCount: number;
+  reviewedCount: number;
+  schoolClosingTime: string;
+  schoolOpeningTime: string;
+  timezone: string;
+}
+
+function formatDatetimeLocal(d: Date = new Date()): string {
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  const year = d.getFullYear();
+  const month = pad(d.getMonth() + 1);
+  const day = pad(d.getDate());
+  const hours = pad(d.getHours());
+  const minutes = pad(d.getMinutes());
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
+function VisitorReportsView({ onSelectPass, userRole }: VisitorReportsViewProps) {
   const [reportCategory, setReportCategory] = useState<ReportCategory>('all');
   const [reportDateFrom, setReportDateFrom] = useState<string>(() => getManilaDateString());
   const [reportDateTo, setReportDateTo] = useState<string>(() => getManilaDateString());
+  const [datePreset, setDatePreset] = useState<DatePresetKey | 'custom' | ''>('today');
+  const [officeFilter, setOfficeFilter] = useState<string>('all');
+  const [reviewStatusFilter, setReviewStatusFilter] = useState<string>('all');
+  const [searchQuery, setSearchQuery] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [reportPasses, setReportPasses] = useState<GatePassWithId[]>([]);
+  const [accountabilitySummary, setAccountabilitySummary] = useState<AccountabilitySummaryData | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportFormat, setExportFormat] = useState<'csv' | 'xlsx' | 'pdf' | null>(null);
 
+  // Review & Resolution Modal State
+  const [selectedPassForResolution, setSelectedPassForResolution] = useState<GatePassWithId | null>(null);
+  const [resolutionModalOpen, setResolutionModalOpen] = useState(false);
+  const [resolutionTab, setResolutionTab] = useState<'record_verified_exit' | 'confirm_office_visit' | 'mark_reviewed' | 'record_exception'>('record_verified_exit');
+  const [verifiedExitTime, setVerifiedExitTime] = useState('');
+  const [verifiedExitGate, setVerifiedExitGate] = useState('');
+  const [verifiedOfficeTime, setVerifiedOfficeTime] = useState('');
+  const [resolutionReason, setResolutionReason] = useState('');
+  const [exceptionType, setExceptionType] = useState<'redirected' | 'office_closed' | 'cancelled_after_entry' | 'cctv_verified' | 'emergency_evacuation' | 'other'>('redirected');
+  const [submittingResolution, setSubmittingResolution] = useState(false);
+
+  const isSuperAdmin = userRole === 'superadmin';
+
   const reportDescriptions: Record<ReportCategory, { title: string; desc: string }> = {
     all: {
-      title: 'All Visitor Records Report',
+      title: 'All Visitor Records (Everything)',
       desc: 'All visitor passes and registration records within the selected date range.',
+    },
+    campus_exit: {
+      title: 'Campus Exit Report (No Recorded Exit)',
+      desc: 'Visitors who entered campus but have no recorded exit after school operating hours.',
+    },
+    office_visit: {
+      title: 'Office Visit Report (Office Visit Not Recorded)',
+      desc: 'Visitors who entered campus and selected an office, but arrival was not recorded by operating hours.',
+    },
+    completed: {
+      title: 'Completed Visits',
+      desc: 'Visitors who entered, completed their office attendance (or general visit), and exited properly.',
+    },
+    requiring_review: {
+      title: 'Requiring Review',
+      desc: 'Visitors with missing exit or missing office arrival records awaiting review or resolution.',
     },
     missing_timeout: {
       title: 'Missing Time-Out Report',
@@ -1699,6 +1834,18 @@ function VisitorReportsView({ onSelectPass }: VisitorReportsViewProps) {
       params.set('pageSize', '250');
       if (reportDateFrom) params.set('dateFrom', reportDateFrom);
       if (reportDateTo) params.set('dateTo', reportDateTo);
+      if (['campus_exit', 'office_visit', 'completed', 'requiring_review'].includes(reportCategory)) {
+        params.set('category', reportCategory);
+      }
+      if (officeFilter && officeFilter !== 'all') {
+        params.set('office', officeFilter);
+      }
+      if (reviewStatusFilter && reviewStatusFilter !== 'all') {
+        params.set('reviewStatus', reviewStatusFilter);
+      }
+      if (searchQuery.trim()) {
+        params.set('search', searchQuery.trim());
+      }
 
       const res = await fetch(`/api/admin/records?${params.toString()}`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -1707,10 +1854,12 @@ function VisitorReportsView({ onSelectPass }: VisitorReportsViewProps) {
       const data = await res.json();
       const items: GatePassWithId[] = (data?.passes || []).map(deserializeRecordPass);
 
+      if (data?.accountabilitySummary) {
+        setAccountabilitySummary(data.accountabilitySummary);
+      }
+
       let filtered = items;
-      if (reportCategory === 'all') {
-        filtered = items;
-      } else if (reportCategory === 'missing_timeout') {
+      if (reportCategory === 'missing_timeout') {
         filtered = items.filter((p) => p.timeIn != null && p.timeOut == null);
       } else if (reportCategory === 'currently_inside') {
         filtered = items.filter((p) => p.status === 'inside' || (p.timeIn != null && p.timeOut == null));
@@ -1734,11 +1883,95 @@ function VisitorReportsView({ onSelectPass }: VisitorReportsViewProps) {
     } finally {
       setLoading(false);
     }
-  }, [reportCategory, reportDateFrom, reportDateTo]);
+  }, [reportCategory, reportDateFrom, reportDateTo, officeFilter, reviewStatusFilter, searchQuery]);
 
   useEffect(() => {
     void loadReportData();
   }, [loadReportData]);
+
+  function applyPreset(presetKey: DatePresetKey) {
+    const { from, to } = getManilaDatePresetRange(presetKey);
+    setDatePreset(presetKey);
+    setReportDateFrom(from);
+    setReportDateTo(to);
+  }
+
+  // Extract unique offices from passes for filtering
+  const availableOffices = Array.from(
+    new Set(
+      reportPasses
+        .map((p) => p.destinationOffice)
+        .filter((o): o is string => Boolean(o && o.trim() !== '' && o.toLowerCase() !== 'general campus'))
+    )
+  ).sort();
+
+  function openResolutionModal(pass: GatePassWithId) {
+    setSelectedPassForResolution(pass);
+    if (pass.missingOffice && !pass.missingExit) {
+      setResolutionTab('confirm_office_visit');
+    } else if (pass.missingExit) {
+      setResolutionTab('record_verified_exit');
+    } else {
+      setResolutionTab('mark_reviewed');
+    }
+    setVerifiedExitTime(formatDatetimeLocal(new Date()));
+    setVerifiedExitGate(pass.gate || pass.expectedGate || 'Gate 1');
+    setVerifiedOfficeTime(formatDatetimeLocal(new Date()));
+    setResolutionReason('');
+    setExceptionType('redirected');
+    setResolutionModalOpen(true);
+  }
+
+  async function handleRecordResolution(e: React.FormEvent) {
+    e.preventDefault();
+    if (!selectedPassForResolution) return;
+    if (resolutionReason.trim().length < 5) {
+      toast.error('Please provide a reason / explanation of at least 5 characters.');
+      return;
+    }
+    setSubmittingResolution(true);
+    try {
+      const token = await getAccessToken();
+      const body: any = {
+        action: resolutionTab,
+        passId: selectedPassForResolution.id,
+        reason: resolutionReason.trim(),
+      };
+      if (resolutionTab === 'record_verified_exit') {
+        body.exitTime = verifiedExitTime ? new Date(verifiedExitTime).toISOString() : new Date().toISOString();
+        body.gate = verifiedExitGate.trim() || 'Gate 1';
+      } else if (resolutionTab === 'confirm_office_visit') {
+        body.verifiedTime = verifiedOfficeTime ? new Date(verifiedOfficeTime).toISOString() : new Date().toISOString();
+      } else if (resolutionTab === 'mark_reviewed') {
+        body.notes = resolutionReason.trim();
+      } else if (resolutionTab === 'record_exception') {
+        body.exceptionType = exceptionType;
+      }
+
+      const res = await fetch('/api/admin/records', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(data?.message || data?.error || 'Failed to record resolution');
+      }
+
+      toast.success('Accountability resolution recorded successfully.');
+      setResolutionModalOpen(false);
+      setSelectedPassForResolution(null);
+      setResolutionReason('');
+      await loadReportData();
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to record resolution.');
+    } finally {
+      setSubmittingResolution(false);
+    }
+  }
 
   async function handleExportReport(format: 'csv' | 'xlsx' | 'pdf') {
     if (reportPasses.length === 0) {
@@ -1749,7 +1982,7 @@ function VisitorReportsView({ onSelectPass }: VisitorReportsViewProps) {
     setExportFormat(format);
     try {
       const info = reportDescriptions[reportCategory];
-      const filename = `visitor_report_${reportCategory}_${formatManilaFileTimestamp(new Date())}`;
+      const filename = `visitor_accountability_report_${reportCategory}_${formatManilaFileTimestamp(new Date())}`;
       const columns = [
         { header: 'Visitor Name', key: 'visitorName', width: 22 },
         { header: 'Sex', key: 'gender', width: 10 },
@@ -1762,35 +1995,64 @@ function VisitorReportsView({ onSelectPass }: VisitorReportsViewProps) {
         { header: 'Scheduled Date', key: 'visitDate', width: 14 },
         { header: 'Arrival Mode', key: 'arrivalMode', width: 14 },
         { header: 'Pass Status', key: 'status', width: 14 },
-        { header: 'Office Attendance', key: 'attendanceStatus', width: 18 },
-        { header: 'Registration Source', key: 'source', width: 14 },
         { header: 'Time In', key: 'timeIn', width: 20 },
         { header: 'Time Out', key: 'timeOut', width: 20 },
         { header: 'Gate', key: 'gate', width: 14 },
+        { header: 'Office Attendance', key: 'attendanceStatus', width: 18 },
+        { header: 'Accountability Status', key: 'accountabilityStatus', width: 20 },
+        { header: 'Missing Records Flag', key: 'missingFlags', width: 26 },
+        { header: 'Overdue Duration', key: 'overdueDuration', width: 18 },
+        { header: 'Resolution Notes', key: 'notes', width: 30 },
+        { header: 'Exit Verification', key: 'exitVerification', width: 18 },
       ];
-      const rows = reportPasses.map((r) => ({
-        visitorName: r.visitorName,
-        gender: r.gender ? r.gender.charAt(0).toUpperCase() + r.gender.slice(1) : '—',
-        contactNumber: r.contactNumber || '—',
-        email: r.email || '—',
-        address:
-          [r.homeBuilding, r.homeStreet, r.barangayName, r.cityName, r.provinceName, r.regionName]
-            .filter(Boolean)
-            .join(', ') ||
-          r.homeAddress ||
-          '—',
-        destinationOffice: r.destinationOffice || 'General Campus',
-        purpose: r.purpose,
-        visitType: r.visitType ? r.visitType.replace(/_/g, ' ') : 'General',
-        visitDate: r.visitDate || '—',
-        arrivalMode: r.arrivalMode === 'vehicle' ? 'Vehicle' : 'No Vehicle (Walk-in)',
-        status: r.status,
-        attendanceStatus: r.attendanceStatus ? r.attendanceStatus.replace(/_/g, ' ') : '—',
-        source: r.source ? r.source.toUpperCase() : '—',
-        timeIn: r.timeIn ? formatManilaDateTime(r.timeIn.toMillis()) : '—',
-        timeOut: r.timeOut ? formatManilaDateTime(r.timeOut.toMillis()) : '—',
-        gate: r.gate || '—',
-      }));
+
+      const rows = reportPasses.map((r) => {
+        let missingFlags = 'None';
+        if (r.bothMissing) {
+          missingFlags = 'Both: No Recorded Exit & Office Visit Not Recorded';
+        } else if (r.missingExit) {
+          missingFlags = 'No Recorded Exit';
+        } else if (r.missingOffice) {
+          missingFlags = 'Office Visit Not Recorded';
+        }
+
+        let accountabilityStatusLabel = 'Pending Review';
+        if (r.accountabilityStatus === 'resolved') accountabilityStatusLabel = 'Manually Corrected';
+        else if (r.accountabilityStatus === 'reviewed') accountabilityStatusLabel = 'Reviewed';
+        else if (r.accountabilityStatus === 'exception') accountabilityStatusLabel = 'Exception Recorded';
+
+        const overdueDuration = r.overdueMinutes && r.overdueMinutes > 0
+          ? `${Math.floor(r.overdueMinutes / 60)}h ${r.overdueMinutes % 60}m overdue`
+          : '—';
+
+        return {
+          visitorName: r.visitorName,
+          gender: r.gender ? r.gender.charAt(0).toUpperCase() + r.gender.slice(1) : '—',
+          contactNumber: r.contactNumber || '—',
+          email: r.email || '—',
+          address:
+            [r.homeBuilding, r.homeStreet, r.barangayName, r.cityName, r.provinceName, r.regionName]
+              .filter(Boolean)
+              .join(', ') ||
+            r.homeAddress ||
+            '—',
+          destinationOffice: r.destinationOffice || 'General Campus',
+          purpose: r.purpose,
+          visitType: r.visitType ? r.visitType.replace(/_/g, ' ') : 'General',
+          visitDate: r.visitDate || '—',
+          arrivalMode: r.arrivalMode === 'vehicle' ? 'Vehicle' : 'No Vehicle (Walk-in)',
+          status: r.status,
+          timeIn: r.timeIn ? formatManilaDateTime(r.timeIn.toMillis()) : '—',
+          timeOut: r.timeOut ? formatManilaDateTime(r.timeOut.toMillis()) : '—',
+          gate: r.gate || '—',
+          attendanceStatus: r.attendanceStatus ? r.attendanceStatus.replace(/_/g, ' ') : '—',
+          accountabilityStatus: accountabilityStatusLabel,
+          missingFlags,
+          overdueDuration,
+          notes: r.accountabilityNotes || '—',
+          exitVerification: r.exitVerificationType ? r.exitVerificationType.replace(/_/g, ' ') : (r.timeOut ? 'Scanner' : '—'),
+        };
+      });
 
       const reportOpts = {
         title: info.title,
@@ -1800,6 +2062,7 @@ function VisitorReportsView({ onSelectPass }: VisitorReportsViewProps) {
         filterMetadata: {
           'Report Category': info.title,
           'Date Range': `${reportDateFrom} to ${reportDateTo}`,
+          'School Hours': `${accountabilitySummary?.schoolOpeningTime || '08:00'} – ${accountabilitySummary?.schoolClosingTime || '17:00'} (${accountabilitySummary?.timezone || 'Asia/Manila'})`,
         },
         filename: `${filename}.${format}`,
       };
@@ -1807,7 +2070,7 @@ function VisitorReportsView({ onSelectPass }: VisitorReportsViewProps) {
       if (format === 'csv') {
         await exportReportToCsv(reportOpts);
       } else if (format === 'xlsx') {
-        await exportReportToExcel({ ...reportOpts, sheetName: 'Visitor Report' });
+        await exportReportToExcel({ ...reportOpts, sheetName: 'Visitor Accountability' });
       } else {
         await exportReportToPdf(reportOpts);
       }
@@ -1824,96 +2087,333 @@ function VisitorReportsView({ onSelectPass }: VisitorReportsViewProps) {
 
   return (
     <div className="space-y-5">
-      <Card className="p-5">
-        <div className="flex flex-wrap items-end gap-4">
-          <div className="min-w-0 flex-1 sm:min-w-64">
-            <label htmlFor="report-category-select" className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-[var(--color-text-secondary)]">
-              Report Category
-            </label>
-            <Select
-              id="report-category-select"
-              value={reportCategory}
-              onChange={(e) => setReportCategory(e.target.value as ReportCategory)}
-            >
-              <option value="all">All Records (Everything)</option>
-              <option value="missing_timeout">Missing Time-Out</option>
-              <option value="currently_inside">Currently Inside Campus</option>
-              <option value="exited_unconfirmed">Exited Without Office Confirmation</option>
-              <option value="specific_unconfirmed">Specific-Person Not Confirmed by Office</option>
-              <option value="approved_no_arrival">Approved Requests (Never Arrived at Gate)</option>
-            </Select>
-          </div>
+      {/* Operating Hours Info Banner */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3.5 text-xs text-[var(--color-text-secondary)]">
+        <div className="flex items-center gap-2">
+          <Clock className="h-4 w-4 text-[var(--color-brand)] shrink-0" />
+          <span>
+            <strong>Campus Operating Hours:</strong> {accountabilitySummary?.schoolOpeningTime || '08:00'} – {accountabilitySummary?.schoolClosingTime || '17:00'} ({accountabilitySummary?.timezone || 'Asia/Manila'}). Automated accountability checks evaluate incomplete visits after operating hours.
+          </span>
+        </div>
+        <span className="font-semibold text-[var(--color-text-primary)]">
+          {reportPasses.length} {reportPasses.length === 1 ? 'record' : 'records'} matching current view
+        </span>
+      </div>
 
-          <div className="w-full sm:w-44">
-            <label htmlFor="report-date-from" className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-[var(--color-text-secondary)]">
+      {/* 5 Deduplicated Overview Statistics Cards */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        <button
+          type="button"
+          onClick={() => setReportCategory('all')}
+          className={`rounded-xl border p-4 text-left transition-all ${
+            reportCategory === 'all'
+              ? 'border-[var(--color-brand)] bg-[var(--color-surface)] ring-2 ring-[var(--color-brand)]/20'
+              : 'border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-border-strong)]'
+          }`}
+        >
+          <p className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-secondary)]">Total Visitors</p>
+          <p className="mt-1 text-2xl font-bold text-[var(--color-text-primary)]">
+            {accountabilitySummary?.totalVisitors ?? 0}
+          </p>
+          <p className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">Unique visitors</p>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setReportCategory('completed')}
+          className={`rounded-xl border p-4 text-left transition-all ${
+            reportCategory === 'completed'
+              ? 'border-emerald-600 bg-emerald-50/50 ring-2 ring-emerald-500/20'
+              : 'border-[var(--color-border)] bg-[var(--color-surface)] hover:border-emerald-300'
+          }`}
+        >
+          <p className="text-xs font-semibold uppercase tracking-wider text-emerald-800">Completed Visits</p>
+          <p className="mt-1 text-2xl font-bold text-emerald-700">
+            {accountabilitySummary?.completedVisits ?? 0}
+          </p>
+          <p className="mt-0.5 text-[11px] text-emerald-600/80">Proper entry & exit</p>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setReportCategory('campus_exit')}
+          className={`rounded-xl border p-4 text-left transition-all ${
+            reportCategory === 'campus_exit'
+              ? 'border-rose-600 bg-rose-50/50 ring-2 ring-rose-500/20'
+              : 'border-[var(--color-border)] bg-[var(--color-surface)] hover:border-rose-300'
+          }`}
+        >
+          <p className="text-xs font-semibold uppercase tracking-wider text-rose-800">No Recorded Exit</p>
+          <p className="mt-1 text-2xl font-bold text-rose-700">
+            {accountabilitySummary?.missingExitCount ?? 0}
+          </p>
+          <p className="mt-0.5 text-[11px] text-rose-600/80">Entered, no exit scan</p>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setReportCategory('office_visit')}
+          className={`rounded-xl border p-4 text-left transition-all ${
+            reportCategory === 'office_visit'
+              ? 'border-amber-600 bg-amber-50/50 ring-2 ring-amber-500/20'
+              : 'border-[var(--color-border)] bg-[var(--color-surface)] hover:border-amber-300'
+          }`}
+        >
+          <p className="text-xs font-semibold uppercase tracking-wider text-amber-800">Office Not Recorded</p>
+          <p className="mt-1 text-2xl font-bold text-amber-700">
+            {accountabilitySummary?.missingOfficeCount ?? 0}
+          </p>
+          <p className="mt-0.5 text-[11px] text-amber-600/80">Arrival not logged</p>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setReportCategory('requiring_review')}
+          className={`rounded-xl border p-4 text-left transition-all col-span-2 sm:col-span-1 ${
+            reportCategory === 'requiring_review'
+              ? 'border-purple-600 bg-purple-50/50 ring-2 ring-purple-500/20'
+              : 'border-[var(--color-border)] bg-[var(--color-surface)] hover:border-purple-300'
+          }`}
+        >
+          <p className="text-xs font-semibold uppercase tracking-wider text-purple-800">Requiring Review</p>
+          <p className="mt-1 text-2xl font-bold text-purple-700">
+            {accountabilitySummary?.requiringReviewCount ?? 0}
+          </p>
+          <p className="mt-0.5 text-[11px] text-purple-600/80">Unresolved anomalies</p>
+        </button>
+      </div>
+
+      {/* Main Filter & Navigation Card */}
+      <Card className="p-5 space-y-4">
+        {/* Category Pills Navigation */}
+        <div className="flex flex-wrap items-center gap-1.5 border-b border-[var(--color-border)] pb-3">
+          <span className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-secondary)] mr-2">Category:</span>
+          <Button
+            type="button"
+            size="sm"
+            variant={reportCategory === 'all' ? 'primary' : 'secondary'}
+            onClick={() => setReportCategory('all')}
+          >
+            All Records
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant={reportCategory === 'campus_exit' ? 'primary' : 'secondary'}
+            onClick={() => setReportCategory('campus_exit')}
+          >
+            Campus Exit Report
+            {(accountabilitySummary?.missingExitCount ?? 0) > 0 && (
+              <span className="ml-1.5 rounded-full bg-rose-100 px-1.5 py-0.2 text-[10px] font-bold text-rose-800">
+                {accountabilitySummary?.missingExitCount}
+              </span>
+            )}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant={reportCategory === 'office_visit' ? 'primary' : 'secondary'}
+            onClick={() => setReportCategory('office_visit')}
+          >
+            Office Visit Report
+            {(accountabilitySummary?.missingOfficeCount ?? 0) > 0 && (
+              <span className="ml-1.5 rounded-full bg-amber-100 px-1.5 py-0.2 text-[10px] font-bold text-amber-800">
+                {accountabilitySummary?.missingOfficeCount}
+              </span>
+            )}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant={reportCategory === 'completed' ? 'primary' : 'secondary'}
+            onClick={() => setReportCategory('completed')}
+          >
+            Completed Visits
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant={reportCategory === 'requiring_review' ? 'primary' : 'secondary'}
+            onClick={() => setReportCategory('requiring_review')}
+          >
+            Requiring Review
+            {(accountabilitySummary?.requiringReviewCount ?? 0) > 0 && (
+              <span className="ml-1.5 rounded-full bg-purple-100 px-1.5 py-0.2 text-[10px] font-bold text-purple-800">
+                {accountabilitySummary?.requiringReviewCount}
+              </span>
+            )}
+          </Button>
+        </div>
+
+        {/* Date Presets */}
+        <div className="flex flex-wrap items-center gap-1.5 border-b border-[var(--color-border)] pb-3">
+          <span className="text-xs font-semibold text-[var(--color-text-secondary)] mr-1">Date Presets:</span>
+          <Button
+            type="button"
+            size="sm"
+            variant={datePreset === 'today' ? 'primary' : 'secondary'}
+            onClick={() => applyPreset('today')}
+          >
+            Today
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant={datePreset === 'yesterday' ? 'primary' : 'secondary'}
+            onClick={() => applyPreset('yesterday')}
+          >
+            Yesterday
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant={datePreset === 'thisWeek' ? 'primary' : 'secondary'}
+            onClick={() => applyPreset('thisWeek')}
+          >
+            This Week
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant={datePreset === 'thisMonth' ? 'primary' : 'secondary'}
+            onClick={() => applyPreset('thisMonth')}
+          >
+            This Month
+          </Button>
+        </div>
+
+        {/* Filter Controls Grid */}
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-6 items-end">
+          <div className="lg:col-span-1">
+            <label htmlFor="report-date-from" className="mb-1 block text-xs font-bold uppercase tracking-wide text-[var(--color-text-secondary)]">
               From Date
             </label>
             <Input
               id="report-date-from"
               type="date"
               value={reportDateFrom}
-              onChange={(e) => setReportDateFrom(e.target.value)}
+              onChange={(e) => {
+                setDatePreset('custom');
+                setReportDateFrom(e.target.value);
+              }}
             />
           </div>
 
-          <div className="w-full sm:w-44">
-            <label htmlFor="report-date-to" className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-[var(--color-text-secondary)]">
+          <div className="lg:col-span-1">
+            <label htmlFor="report-date-to" className="mb-1 block text-xs font-bold uppercase tracking-wide text-[var(--color-text-secondary)]">
               To Date
             </label>
             <Input
               id="report-date-to"
               type="date"
               value={reportDateTo}
-              onChange={(e) => setReportDateTo(e.target.value)}
+              onChange={(e) => {
+                setDatePreset('custom');
+                setReportDateTo(e.target.value);
+              }}
             />
           </div>
 
-          <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() => void loadReportData()}
-              loading={loading}
-              icon={<RefreshCw className="h-4 w-4" />}
+          <div className="lg:col-span-1">
+            <label htmlFor="report-office-filter" className="mb-1 block text-xs font-bold uppercase tracking-wide text-[var(--color-text-secondary)]">
+              Destination Office
+            </label>
+            <Select
+              id="report-office-filter"
+              value={officeFilter}
+              onChange={(e) => setOfficeFilter(e.target.value)}
             >
-              Refresh
-            </Button>
-            <div className="flex items-center gap-1.5">
+              <option value="all">All Offices</option>
+              {availableOffices.map((office) => (
+                <option key={office} value={office}>{office}</option>
+              ))}
+            </Select>
+          </div>
+
+          <div className="lg:col-span-1">
+            <label htmlFor="report-review-status-filter" className="mb-1 block text-xs font-bold uppercase tracking-wide text-[var(--color-text-secondary)]">
+              Review Status
+            </label>
+            <Select
+              id="report-review-status-filter"
+              value={reviewStatusFilter}
+              onChange={(e) => setReviewStatusFilter(e.target.value)}
+            >
+              <option value="all">All Statuses</option>
+              <option value="pending">Pending Review</option>
+              <option value="resolved">Manually Corrected</option>
+              <option value="reviewed">Reviewed</option>
+              <option value="exception">Exception Recorded</option>
+            </Select>
+          </div>
+
+          <div className="lg:col-span-2">
+            <label htmlFor="report-search-query" className="mb-1 block text-xs font-bold uppercase tracking-wide text-[var(--color-text-secondary)]">
+              Search Visitor
+            </label>
+            <div className="flex gap-2">
+              <Input
+                id="report-search-query"
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Name, phone, or purpose..."
+                className="flex-1"
+              />
               <Button
                 type="button"
                 variant="secondary"
-                onClick={() => void handleExportReport('csv')}
-                loading={exporting && exportFormat === 'csv'}
-                disabled={exporting || reportPasses.length === 0}
-                icon={<Download className="h-4 w-4" />}
+                onClick={() => void loadReportData()}
+                loading={loading}
+                icon={<RefreshCw className="h-4 w-4" />}
               >
-                CSV
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => void handleExportReport('xlsx')}
-                loading={exporting && exportFormat === 'xlsx'}
-                disabled={exporting || reportPasses.length === 0}
-                icon={<Download className="h-4 w-4" />}
-              >
-                Excel
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => void handleExportReport('pdf')}
-                loading={exporting && exportFormat === 'pdf'}
-                disabled={exporting || reportPasses.length === 0}
-                icon={<Download className="h-4 w-4" />}
-              >
-                PDF
+                Refresh
               </Button>
             </div>
           </div>
         </div>
+
+        {/* Export Buttons */}
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--color-border)] pt-3">
+          <div className="text-xs text-[var(--color-text-secondary)]">
+            Export accountability data with full visitor, office, scan, and resolution notes:
+          </div>
+          <div className="flex items-center gap-1.5">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => void handleExportReport('csv')}
+              loading={exporting && exportFormat === 'csv'}
+              disabled={exporting || reportPasses.length === 0}
+              icon={<Download className="h-4 w-4" />}
+            >
+              CSV
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => void handleExportReport('xlsx')}
+              loading={exporting && exportFormat === 'xlsx'}
+              disabled={exporting || reportPasses.length === 0}
+              icon={<Download className="h-4 w-4" />}
+            >
+              Excel
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => void handleExportReport('pdf')}
+              loading={exporting && exportFormat === 'pdf'}
+              disabled={exporting || reportPasses.length === 0}
+              icon={<Download className="h-4 w-4" />}
+            >
+              PDF
+            </Button>
+          </div>
+        </div>
       </Card>
 
+      {/* View Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 gap-3">
         <div>
           <h2 className="text-sm font-bold text-[var(--color-text-primary)]">{meta.title}</h2>
@@ -1926,87 +2426,481 @@ function VisitorReportsView({ onSelectPass }: VisitorReportsViewProps) {
         </div>
       </div>
 
+      {/* Accountability Data Table */}
       {loading ? (
         <DataTable>
           <DataTableHead>
             <DataTableRow>
-              <DataTableCell isHeader>Visitor Name</DataTableCell>
-              <DataTableCell isHeader>Contact Number</DataTableCell>
-              <DataTableCell isHeader>Office</DataTableCell>
+              <DataTableCell isHeader>Visitor Name & Contact</DataTableCell>
+              <DataTableCell isHeader>Destination & Purpose</DataTableCell>
               <DataTableCell isHeader>Time In</DataTableCell>
               <DataTableCell isHeader>Time Out</DataTableCell>
-              <DataTableCell isHeader>Attendance</DataTableCell>
-              <DataTableCell isHeader>Status</DataTableCell>
+              <DataTableCell isHeader>Office Attendance</DataTableCell>
+              <DataTableCell isHeader>Accountability & Status</DataTableCell>
               <DataTableCell isHeader className="text-right">Actions</DataTableCell>
             </DataTableRow>
           </DataTableHead>
           <tbody>
-            <TableSkeletonRows columns={8} rows={8} columnWidths={['20%', '15%', '15%', '12%', '12%', '10%', '8%', '8%']} ariaLabel="Loading report records…" />
+            <TableSkeletonRows columns={7} rows={8} columnWidths={['22%', '18%', '13%', '13%', '12%', '14%', '8%']} ariaLabel="Loading accountability records…" />
           </tbody>
         </DataTable>
       ) : reportPasses.length === 0 ? (
         <Card className="p-8 text-center text-sm text-[var(--color-text-muted)]">
-          No records matched the selected report criteria for this date range.
+          No visitor records matched the selected accountability criteria for this date range.
         </Card>
       ) : (
         <DataTable>
           <DataTableHead>
             <DataTableRow>
-              <DataTableCell isHeader>Visitor Name</DataTableCell>
-              <DataTableCell isHeader>Contact Number</DataTableCell>
-              <DataTableCell isHeader>Office</DataTableCell>
+              <DataTableCell isHeader>Visitor Name & Contact</DataTableCell>
+              <DataTableCell isHeader>Destination & Purpose</DataTableCell>
               <DataTableCell isHeader>Time In</DataTableCell>
               <DataTableCell isHeader>Time Out</DataTableCell>
-              <DataTableCell isHeader>Attendance</DataTableCell>
-              <DataTableCell isHeader>Status</DataTableCell>
+              <DataTableCell isHeader>Office Attendance</DataTableCell>
+              <DataTableCell isHeader>Accountability & Status</DataTableCell>
               <DataTableCell isHeader className="text-right">Actions</DataTableCell>
             </DataTableRow>
           </DataTableHead>
           <tbody>
             {reportPasses.map((pass) => (
               <DataTableRow key={pass.id}>
-                <DataTableCell className="font-semibold text-xs text-[var(--color-text-primary)]">
-                  {pass.visitorName}
-                </DataTableCell>
-                <DataTableCell className="text-xs text-[var(--color-text-secondary)]">
-                  {pass.contactNumber || '—'}
-                </DataTableCell>
-                <DataTableCell className="text-xs text-[var(--color-text-secondary)]">
-                  {pass.destinationOffice || 'General Campus'}
-                </DataTableCell>
-                <DataTableCell className="text-xs text-[var(--color-text-secondary)]">
-                  {pass.timeIn ? formatManilaTime(pass.timeIn.toDate()) : '—'}
-                </DataTableCell>
-                <DataTableCell className="text-xs text-[var(--color-text-secondary)]">
-                  {pass.timeOut ? formatManilaTime(pass.timeOut.toDate()) : '—'}
-                </DataTableCell>
                 <DataTableCell className="text-xs">
-                  <span className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold ${
-                    pass.attendanceStatus === 'confirmed'
+                  <div className="font-semibold text-[var(--color-text-primary)]">
+                    {pass.visitorName}
+                  </div>
+                  <div className="text-[11px] text-[var(--color-text-secondary)]">
+                    {pass.contactNumber || 'No contact number'} • {pass.gender ? pass.gender.charAt(0).toUpperCase() + pass.gender.slice(1) : 'Sex —'}
+                  </div>
+                </DataTableCell>
+
+                <DataTableCell className="text-xs">
+                  <div className="font-medium text-[var(--color-text-primary)]">
+                    {pass.destinationOffice || 'General Campus'}
+                  </div>
+                  <div className="text-[11px] text-[var(--color-text-muted)] truncate max-w-xs" title={pass.purpose}>
+                    {pass.purpose}
+                  </div>
+                </DataTableCell>
+
+                <DataTableCell className="text-xs text-[var(--color-text-secondary)]">
+                  {pass.timeIn ? (
+                    <div>
+                      <div>{formatManilaTime(pass.timeIn.toDate())}</div>
+                      {pass.gate && <div className="text-[10px] text-[var(--color-text-muted)]">Gate: {pass.gate}</div>}
+                    </div>
+                  ) : (
+                    <span className="text-[var(--color-text-muted)] italic">No entry scan</span>
+                  )}
+                </DataTableCell>
+
+                <DataTableCell className="text-xs text-[var(--color-text-secondary)]">
+                  {pass.timeOut ? (
+                    <div>
+                      <div>{formatManilaTime(pass.timeOut.toDate())}</div>
+                      {pass.exitVerificationType && pass.exitVerificationType !== 'scanner' && (
+                        <div className="text-[10px] text-emerald-700 font-medium">({pass.exitVerificationType.replace(/_/g, ' ')})</div>
+                      )}
+                    </div>
+                  ) : pass.hasEntered && pass.isPastClosing ? (
+                    <span className="text-rose-600 font-semibold italic">No exit recorded</span>
+                  ) : pass.hasEntered ? (
+                    <span className="text-amber-600 font-medium italic">Inside (in hours)</span>
+                  ) : (
+                    <span className="text-[var(--color-text-muted)] italic">—</span>
+                  )}
+                </DataTableCell>
+
+                <DataTableCell className="text-xs">
+                  <span className={`inline-block rounded px-2 py-0.5 text-[10px] font-semibold ${
+                    pass.attendanceStatus === 'confirmed' || pass.attendanceStatus === 'completed'
                       ? 'bg-emerald-100 text-emerald-800'
-                      : 'bg-amber-100 text-amber-800'
+                      : pass.hasEntered
+                      ? 'bg-amber-100 text-amber-800'
+                      : 'bg-zinc-100 text-zinc-700'
                   }`}>
                     {pass.attendanceStatus ? pass.attendanceStatus.replace(/_/g, ' ') : 'awaiting'}
                   </span>
                 </DataTableCell>
-                <DataTableCell>
-                  <StatusBadge status={pass.status} />
+
+                <DataTableCell className="text-xs space-y-1">
+                  {/* Both Missing dual badge */}
+                  {pass.bothMissing ? (
+                    <div className="space-y-1">
+                      <span className="inline-block rounded bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-800">
+                        No Recorded Exit
+                      </span>
+                      <span className="inline-block rounded bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800">
+                        Office Visit Not Recorded
+                      </span>
+                      {(pass.overdueMinutes ?? 0) > 0 && (
+                        <div className="text-[10px] font-medium text-rose-700">
+                          +{Math.floor((pass.overdueMinutes ?? 0) / 60)}h {(pass.overdueMinutes ?? 0) % 60}m past closing
+                        </div>
+                      )}
+                    </div>
+                  ) : pass.missingExit ? (
+                    <div className="space-y-1">
+                      <span className="inline-block rounded bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-800">
+                        No Recorded Exit
+                      </span>
+                      {(pass.overdueMinutes ?? 0) > 0 && (
+                        <div className="text-[10px] font-medium text-rose-700">
+                          +{Math.floor((pass.overdueMinutes ?? 0) / 60)}h {(pass.overdueMinutes ?? 0) % 60}m past closing
+                        </div>
+                      )}
+                    </div>
+                  ) : pass.missingOffice ? (
+                    <span className="inline-block rounded bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800">
+                      Office Visit Not Recorded
+                    </span>
+                  ) : pass.accountabilityStatus === 'resolved' ? (
+                    <span className="inline-block rounded bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
+                      Manually Corrected
+                    </span>
+                  ) : pass.accountabilityStatus === 'reviewed' ? (
+                    <span className="inline-block rounded bg-blue-100 px-2 py-0.5 text-[10px] font-bold text-blue-800">
+                      Reviewed
+                    </span>
+                  ) : pass.accountabilityStatus === 'exception' ? (
+                    <span className="inline-block rounded bg-purple-100 px-2 py-0.5 text-[10px] font-bold text-purple-800">
+                      Exception Recorded
+                    </span>
+                  ) : pass.isCompleted ? (
+                    <span className="inline-block rounded bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
+                      Completed Visit
+                    </span>
+                  ) : (
+                    <StatusBadge status={pass.status} />
+                  )}
+
+                  {pass.accountabilityNotes && (
+                    <div className="text-[10px] text-[var(--color-text-secondary)] italic truncate max-w-xs" title={pass.accountabilityNotes}>
+                      {pass.accountabilityNotes}
+                    </div>
+                  )}
                 </DataTableCell>
+
                 <DataTableCell className="text-right">
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    icon={<Eye className="h-3.5 w-3.5" />}
-                    onClick={() => onSelectPass(pass)}
-                  >
-                    Details
-                  </Button>
+                  <div className="flex items-center justify-end gap-1.5">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      icon={<Eye className="h-3.5 w-3.5" />}
+                      onClick={() => onSelectPass(pass)}
+                    >
+                      Details
+                    </Button>
+                    {isSuperAdmin && (
+                      <Button
+                        size="sm"
+                        variant={pass.missingExit || pass.missingOffice ? 'primary' : 'secondary'}
+                        icon={<ClipboardCheck className="h-3.5 w-3.5" />}
+                        onClick={() => openResolutionModal(pass)}
+                      >
+                        Resolve
+                      </Button>
+                    )}
+                  </div>
                 </DataTableCell>
               </DataTableRow>
             ))}
           </tbody>
         </DataTable>
       )}
+
+      {/* Review & Resolution Modal (Super Admin) */}
+      <Modal
+        isOpen={resolutionModalOpen}
+        onClose={() => {
+          if (!submittingResolution) {
+            setResolutionModalOpen(false);
+            setSelectedPassForResolution(null);
+          }
+        }}
+        title="Visitor Accountability Review & Resolution"
+        description={
+          selectedPassForResolution
+            ? `Super Admin review for visitor ${selectedPassForResolution.visitorName} (Pass #${selectedPassForResolution.id.slice(0, 8)})`
+            : 'Super Admin review'
+        }
+        size="lg"
+      >
+        {selectedPassForResolution && (
+          <div className="space-y-5">
+            {/* Context Summary Box */}
+            <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--color-border)] pb-2.5">
+                <div>
+                  <h4 className="text-sm font-bold text-[var(--color-text-primary)]">
+                    {selectedPassForResolution.visitorName}
+                  </h4>
+                  <p className="text-xs text-[var(--color-text-secondary)]">
+                    {selectedPassForResolution.destinationOffice || 'General Campus'} • Purpose: {selectedPassForResolution.purpose}
+                  </p>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  {selectedPassForResolution.bothMissing ? (
+                    <span className="rounded bg-rose-100 px-2 py-0.5 text-xs font-bold text-rose-800">
+                      Both Exit & Office Missing
+                    </span>
+                  ) : selectedPassForResolution.missingExit ? (
+                    <span className="rounded bg-rose-100 px-2 py-0.5 text-xs font-bold text-rose-800">
+                      No Recorded Exit
+                    </span>
+                  ) : selectedPassForResolution.missingOffice ? (
+                    <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-800">
+                      Office Visit Not Recorded
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 text-xs sm:grid-cols-4">
+                <div>
+                  <span className="text-[var(--color-text-muted)] block">Time In:</span>
+                  <span className="font-semibold text-[var(--color-text-primary)]">
+                    {selectedPassForResolution.timeIn ? formatManilaDateTime(selectedPassForResolution.timeIn.toMillis()) : 'No scan'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[var(--color-text-muted)] block">Closing Time:</span>
+                  <span className="font-semibold text-[var(--color-text-primary)]">
+                    {accountabilitySummary?.schoolClosingTime || '17:00'} ({accountabilitySummary?.timezone || 'Asia/Manila'})
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[var(--color-text-muted)] block">Attendance:</span>
+                  <span className="font-semibold text-[var(--color-text-primary)]">
+                    {selectedPassForResolution.attendanceStatus ? selectedPassForResolution.attendanceStatus.replace(/_/g, ' ') : 'awaiting'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[var(--color-text-muted)] block">Review Status:</span>
+                  <span className="font-semibold text-[var(--color-text-primary)]">
+                    {selectedPassForResolution.accountabilityStatus || 'pending'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Past Resolutions History */}
+              {selectedPassForResolution.resolutions && selectedPassForResolution.resolutions.length > 0 && (
+                <div className="mt-3 border-t border-[var(--color-border)] pt-2.5">
+                  <h5 className="text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-secondary)] mb-1.5">
+                    Past Resolutions / Audit History:
+                  </h5>
+                  <div className="space-y-1.5">
+                    {selectedPassForResolution.resolutions.map((res) => (
+                      <div key={res.id} className="rounded bg-[var(--color-surface)] p-2 text-xs border border-[var(--color-border)]">
+                        <div className="flex items-center justify-between font-semibold text-[var(--color-text-primary)]">
+                          <span>{res.resolutionType.replace(/_/g, ' ').toUpperCase()} {res.exceptionType ? `(${res.exceptionType})` : ''}</span>
+                          <span className="text-[10px] text-[var(--color-text-muted)]">
+                            {formatManilaDateTime(new Date(res.createdAt).getTime())}
+                          </span>
+                        </div>
+                        <p className="mt-0.5 text-[var(--color-text-secondary)]">{res.reason}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Authorization Guard */}
+            {!isSuperAdmin ? (
+              <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-xs text-amber-900">
+                <p className="font-bold">Super Admin Privilege Required</p>
+                <p className="mt-1">
+                  Only Super Administrators have authorization to record verified exits, confirm office arrivals, mark records as reviewed, or file exceptions. Your account is view-only.
+                </p>
+              </div>
+            ) : (
+              <form onSubmit={handleRecordResolution} className="space-y-4">
+                {/* Action Tabs */}
+                <div>
+                  <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-[var(--color-text-secondary)]">
+                    Select Resolution Action
+                  </label>
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    <button
+                      type="button"
+                      onClick={() => setResolutionTab('record_verified_exit')}
+                      className={`rounded-lg border p-2.5 text-xs font-semibold text-center transition-all ${
+                        resolutionTab === 'record_verified_exit'
+                          ? 'border-[var(--color-brand)] bg-[var(--color-brand)]/10 text-[var(--color-brand)] font-bold'
+                          : 'border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)]'
+                      }`}
+                    >
+                      Record Verified Exit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setResolutionTab('confirm_office_visit')}
+                      className={`rounded-lg border p-2.5 text-xs font-semibold text-center transition-all ${
+                        resolutionTab === 'confirm_office_visit'
+                          ? 'border-[var(--color-brand)] bg-[var(--color-brand)]/10 text-[var(--color-brand)] font-bold'
+                          : 'border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)]'
+                      }`}
+                    >
+                      Confirm Office Visit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setResolutionTab('mark_reviewed')}
+                      className={`rounded-lg border p-2.5 text-xs font-semibold text-center transition-all ${
+                        resolutionTab === 'mark_reviewed'
+                          ? 'border-[var(--color-brand)] bg-[var(--color-brand)]/10 text-[var(--color-brand)] font-bold'
+                          : 'border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)]'
+                      }`}
+                    >
+                      Mark as Reviewed
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setResolutionTab('record_exception')}
+                      className={`rounded-lg border p-2.5 text-xs font-semibold text-center transition-all ${
+                        resolutionTab === 'record_exception'
+                          ? 'border-[var(--color-brand)] bg-[var(--color-brand)]/10 text-[var(--color-brand)] font-bold'
+                          : 'border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)]'
+                      }`}
+                    >
+                      Record Exception
+                    </button>
+                  </div>
+                </div>
+
+                {/* Tab Specific Inputs */}
+                {resolutionTab === 'record_verified_exit' && (
+                  <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-3">
+                    <p className="text-xs text-[var(--color-text-secondary)]">
+                      Record a manual verified exit when the visitor left campus without an automated scan, confirmed via security logbook or guard verification. Original scan events are preserved.
+                    </p>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div>
+                        <label htmlFor="verified-exit-time" className="mb-1 block text-xs font-bold uppercase tracking-wide text-[var(--color-text-secondary)]">
+                          Verified Exit Time
+                        </label>
+                        <Input
+                          id="verified-exit-time"
+                          type="datetime-local"
+                          value={verifiedExitTime}
+                          onChange={(e) => setVerifiedExitTime(e.target.value)}
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label htmlFor="verified-exit-gate" className="mb-1 block text-xs font-bold uppercase tracking-wide text-[var(--color-text-secondary)]">
+                          Verified Exit Gate
+                        </label>
+                        <Input
+                          id="verified-exit-gate"
+                          type="text"
+                          value={verifiedExitGate}
+                          onChange={(e) => setVerifiedExitGate(e.target.value)}
+                          placeholder="e.g. Gate 1 / Main Gate"
+                          required
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {resolutionTab === 'confirm_office_visit' && (
+                  <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-3">
+                    <p className="text-xs text-[var(--color-text-secondary)]">
+                      Confirm office arrival when visitor attended their destination office but the office forgot or was unable to confirm in the portal.
+                    </p>
+                    <div>
+                      <label htmlFor="verified-office-time" className="mb-1 block text-xs font-bold uppercase tracking-wide text-[var(--color-text-secondary)]">
+                        Verified Office Arrival Time
+                      </label>
+                      <Input
+                        id="verified-office-time"
+                        type="datetime-local"
+                        value={verifiedOfficeTime}
+                        onChange={(e) => setVerifiedOfficeTime(e.target.value)}
+                        required
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {resolutionTab === 'mark_reviewed' && (
+                  <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-2">
+                    <p className="text-xs text-[var(--color-text-secondary)]">
+                      Document administrative investigation and review notes without altering scan records or fabricating exit timestamps.
+                    </p>
+                  </div>
+                )}
+
+                {resolutionTab === 'record_exception' && (
+                  <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-3">
+                    <p className="text-xs text-[var(--color-text-secondary)]">
+                      Record a valid operational exception that prevented normal campus visit completion.
+                    </p>
+                    <div>
+                      <label htmlFor="exception-type-select" className="mb-1 block text-xs font-bold uppercase tracking-wide text-[var(--color-text-secondary)]">
+                        Exception Type
+                      </label>
+                      <Select
+                        id="exception-type-select"
+                        value={exceptionType}
+                        onChange={(e) => setExceptionType(e.target.value as any)}
+                      >
+                        <option value="redirected">Redirected (Visitor redirected to another location)</option>
+                        <option value="office_closed">Office Closed (Destination office closed early / unavailable)</option>
+                        <option value="cancelled_after_entry">Cancelled After Entry (Visit cancelled after entering)</option>
+                        <option value="cctv_verified">CCTV Verified (Exit confirmed via CCTV review)</option>
+                        <option value="emergency_evacuation">Emergency Evacuation (Campus drill or evacuation)</option>
+                        <option value="other">Other Campus Exception</option>
+                      </Select>
+                    </div>
+                  </div>
+                )}
+
+                {/* Mandatory Reason Field */}
+                <div>
+                  <label htmlFor="resolution-reason" className="mb-1 block text-xs font-bold uppercase tracking-wide text-[var(--color-text-secondary)]">
+                    Mandatory Verification Reason / Investigation Notes (min 5 chars)
+                  </label>
+                  <textarea
+                    id="resolution-reason"
+                    rows={3}
+                    value={resolutionReason}
+                    onChange={(e) => setResolutionReason(e.target.value)}
+                    placeholder="Provide specific justification, verification evidence, or investigation findings..."
+                    required
+                    minLength={5}
+                    className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-2.5 text-xs text-[var(--color-text-primary)] focus:border-[var(--color-brand)] focus:outline-none focus:ring-1 focus:ring-[var(--color-brand)]"
+                  />
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-2 border-t border-[var(--color-border)]">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => {
+                      setResolutionModalOpen(false);
+                      setSelectedPassForResolution(null);
+                    }}
+                    disabled={submittingResolution}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="submit"
+                    variant="primary"
+                    loading={submittingResolution}
+                    disabled={submittingResolution || resolutionReason.trim().length < 5}
+                    icon={<Check className="h-4 w-4" />}
+                  >
+                    Confirm Resolution
+                  </Button>
+                </div>
+              </form>
+            )}
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
