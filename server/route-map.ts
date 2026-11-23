@@ -250,7 +250,7 @@ export const ROUTE_CONTRACT_MATRIX: readonly RouteContract[] = [
     handlerModule: 'server/routes/gate/emergency-device.ts',
   },
 
-  // System Router (8 routes)
+  // System Router (9 routes)
   {
     path: '/api/create-user',
     group: 'system',
@@ -271,6 +271,13 @@ export const ROUTE_CONTRACT_MATRIX: readonly RouteContract[] = [
     subpath: 'decommission-user',
     allowedMethods: ['POST'],
     handlerModule: 'server/routes/system/decommission-user.ts',
+  },
+  {
+    path: '/api/delete-user',
+    group: 'system',
+    subpath: 'delete-user',
+    allowedMethods: ['POST', 'DELETE'],
+    handlerModule: 'server/routes/system/delete-user.ts',
   },
   {
     path: '/api/update-settings',

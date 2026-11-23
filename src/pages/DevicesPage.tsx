@@ -763,6 +763,17 @@ export function DevicesPage() {
                 >
                   {device.status === 'active' ? 'Revoke' : reactivatingDeviceId === device.id ? 'Reactivating…' : 'Reactivate'}
                 </Button>
+                {canManageCredentials && (
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => setDeletingDevice(device)}
+                    title="Permanently Delete Device"
+                    icon={<Trash2 className="h-3.5 w-3.5" />}
+                  >
+                    Delete
+                  </Button>
+                )}
               </div>
             </Card>
           ))}

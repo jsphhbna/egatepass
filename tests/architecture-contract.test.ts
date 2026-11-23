@@ -96,8 +96,8 @@ describe('target repository and Vercel routing contract', () => {
       expect(content.length).toBeGreaterThan(1000);
     }
   });
-  it('enforces canonical 41 API routes contract matrix in server/route-map.ts and vercel.json', () => {
-    expect(ROUTE_CONTRACT_MATRIX.length).toBe(41);
+  it('enforces canonical 42 API routes contract matrix in server/route-map.ts and vercel.json', () => {
+    expect(ROUTE_CONTRACT_MATRIX.length).toBe(42);
 
     const counts: Record<string, number> = {};
     for (const route of ROUTE_CONTRACT_MATRIX) {
@@ -109,7 +109,7 @@ describe('target repository and Vercel routing contract', () => {
     expect(counts['passes']).toBe(5);
     expect(counts['device']).toBe(6);
     expect(counts['gate']).toBe(6);
-    expect(counts['system']).toBe(8);
+    expect(counts['system']).toBe(9);
 
     const routeMap = readFileSync('server/route-map.ts', 'utf8');
     expect(routeMap).toContain('// Admin Router (9 routes)');
@@ -117,7 +117,7 @@ describe('target repository and Vercel routing contract', () => {
     expect(routeMap).toContain('// Passes Router (5 routes)');
     expect(routeMap).toContain('// Device Router (6 routes)');
     expect(routeMap).toContain('// Gate Router (5 routes)');
-    expect(routeMap).toContain('// System Router (8 routes)');
+    expect(routeMap).toContain('// System Router (9 routes)');
 
     expect(routeMap).toContain("path: '/api/decommission-user'");
     expect(routeMap).toContain("path: '/api/reconciliation-items'");
