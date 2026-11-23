@@ -451,7 +451,8 @@ describe('Storage Reset Lock Permission & Upload Policy Verification', () => {
 
     // Table maintenance_state strictly isolated
     expect(migrationSql).toContain('revoke all on table public.maintenance_state from public, anon, authenticated;');
-    expect(migrationSql).toContain('grant select, insert, update, delete on table public.maintenance_state to service_role;');
+    expect(migrationSql).toContain('grant select, insert, update on table public.maintenance_state to service_role;');
+    expect(migrationSql).toContain('revoke delete on table public.maintenance_state from service_role;');
 
     // System reset check preserved in storage policy
     expect(migrationSql).toContain('not private.is_system_reset_locked()');

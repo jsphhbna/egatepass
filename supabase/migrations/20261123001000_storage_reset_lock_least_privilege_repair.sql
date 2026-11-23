@@ -18,9 +18,10 @@ grant execute on function private.is_system_reset_locked() to authenticated;
 grant execute on function private.is_system_reset_locked() to service_role;
 revoke all on function private.is_system_reset_locked() from anon, public;
 
--- 3. Confirm public.maintenance_state remains strictly inaccessible to client roles
+-- 3. Confirm public.maintenance_state remains strictly inaccessible to client roles (and preserves least-privilege for service_role without DELETE)
 revoke all on table public.maintenance_state from public, anon, authenticated;
-grant select, insert, update, delete on table public.maintenance_state to service_role;
+grant select, insert, update on table public.maintenance_state to service_role;
+revoke delete on table public.maintenance_state from service_role;
 
 -- 4. Confirm evidence bucket properties (private, 5MB limit, allowed mime types)
 update storage.buckets
