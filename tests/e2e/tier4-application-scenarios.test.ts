@@ -346,7 +346,7 @@ describe('Tier 4: Real-World Application Scenarios (5 Comprehensive Workflows)',
     const topology = inspectServerlessRouteTopology();
     expect(topology.catchAllCount).toBe(6);
     expect(topology.catchAllCount).toBeLessThanOrEqual(12);
-    expect(topology.totalRoutesInMatrix).toBe(41);
+    expect(topology.totalRoutesInMatrix).toBe(42);
 
     // 2. Verify all R1-R4 capabilities operate in harmony
     // R1: Camera CSS

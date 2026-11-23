@@ -504,8 +504,8 @@ describe('Tier 1: Comprehensive Feature Coverage (30 Tests)', () => {
       );
     });
 
-    it('T1-F5-02: ROUTE_CONTRACT_MATRIX maintains exact 41 logical route contracts across 6 groups', () => {
-      expect(ROUTE_CONTRACT_MATRIX.length).toBe(41);
+    it('T1-F5-02: ROUTE_CONTRACT_MATRIX maintains exact 42 logical route contracts across 6 groups', () => {
+      expect(ROUTE_CONTRACT_MATRIX.length).toBe(42);
 
       const groups = new Set(ROUTE_CONTRACT_MATRIX.map((r) => r.group));
       expect(groups.has('admin')).toBe(true);

@@ -192,7 +192,7 @@ erDiagram
 
 ## 3. Canonical API Route Architecture
 
-The platform's core route contract matrix is declared in `server/route-map.ts` (`41 core contract endpoints`), while additional portal, office, lookup, calendar, and reference endpoints share the exact **6 physical Vercel Serverless Function entrypoints** under `api/*/[...route].ts`:
+The platform's core route contract matrix is declared in `server/route-map.ts` (`42 core contract endpoints`), while additional portal, office, lookup, calendar, and reference endpoints share the exact **6 physical Vercel Serverless Function entrypoints** under `api/*/[...route].ts`:
 
 ### 3.1 Admin Router (10 matrix routes + `/api/admin/offices`: `/api/admin/*`)
 - `GET /api/admin/activity`: Historical audit event query for administrators.
@@ -239,10 +239,11 @@ The platform's core route contract matrix is declared in `server/route-map.ts` (
 - `GET /api/guard-station-feed`: High-visibility live gate monitor feed for `guard_station` devices and admins.
 - `GET, POST /api/gate/emergency-device`: Gate-scoped ECDSA P-256 SHA-256 signed offline manifest distribution (`GET`) and monotonic batch synchronization (`POST`) for `emergency_device` hardware.
 
-### 3.6 System Router (8 matrix routes + `/api/system/calendar`: `/api/*`)
+### 3.6 System Router (9 matrix routes + `/api/system/calendar`: `/api/*`)
 - `POST /api/create-user`: Provision staff account.
 - `POST /api/update-user`: Update staff role or status.
 - `POST /api/decommission-user`: Permanent decommission of deactivated staff accounts.
+- `POST, DELETE /api/delete-user`: Permanent deletion of decommissioned staff accounts and associated Supabase Auth identities.
 - `POST /api/update-settings`: Super Admin system settings update (`api.save_system_settings_v2` including `global_retention_freeze`).
 - `POST /api/purge-images`: Super Admin manual image purge (blocked fail-closed when `global_retention_freeze` is active).
 - `GET, PATCH /api/reconciliation-items`: Super Admin review and resolution of cross-system anomalies.
