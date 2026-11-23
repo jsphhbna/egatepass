@@ -1194,9 +1194,13 @@ export function GetPassPage() {
             console.warn('Turnstile challenge non-fatal error:', turnstileErr);
           }
         }
-        tx = await createPortalIssueTransaction(freshCaptchaToken).catch(() => null);
+        let txCreationError: string | null = null;
+        tx = await createPortalIssueTransaction(freshCaptchaToken).catch((err) => {
+          txCreationError = err instanceof Error ? err.message : 'Visitor registration could not be started.';
+          return null;
+        });
         if (!tx) {
-          toast.error('Please ensure personal details are completed.');
+          toast.error(txCreationError || 'Please complete security verification first.');
           return;
         }
         portalTransactionRef.current = tx;
@@ -6489,6 +6493,7 @@ export function GetPassPage() {
             passId={passId || ''}
             qrToken={rawQrToken || ''}
             source="portal"
+            initialEmail={visitorEmail || ''}
             mode={step === 'delivery' ? 'delivery-gate' : 'modal'}
             onSuccess={() => {
               setEmailDeliverySecured(true);

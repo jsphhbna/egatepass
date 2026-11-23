@@ -1764,11 +1764,25 @@ function VisitorReportsView({ onSelectPass, userRole }: VisitorReportsViewProps)
   const [officeFilter, setOfficeFilter] = useState<string>('all');
   const [reviewStatusFilter, setReviewStatusFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [reportPasses, setReportPasses] = useState<GatePassWithId[]>([]);
   const [accountabilitySummary, setAccountabilitySummary] = useState<AccountabilitySummaryData | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportFormat, setExportFormat] = useState<'csv' | 'xlsx' | 'pdf' | null>(null);
+
+  // Pagination state
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [totalReportCount, setTotalReportCount] = useState<number>(0);
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  // Request counter & abort controller for search cancellation & race prevention
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const requestCounterRef = useRef<number>(0);
+
+  // Stable requestId for accountability resolution idempotency
+  const resolutionRequestIdRef = useRef<string>('');
 
   // Review & Resolution Modal State
   const [selectedPassForResolution, setSelectedPassForResolution] = useState<GatePassWithId | null>(null);
@@ -1782,6 +1796,14 @@ function VisitorReportsView({ onSelectPass, userRole }: VisitorReportsViewProps)
   const [submittingResolution, setSubmittingResolution] = useState(false);
 
   const isSuperAdmin = userRole === 'superadmin';
+
+  // Debounce search input by 300ms
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery);
+    }, 300);
+    return () => clearTimeout(handler);
+  }, [searchQuery]);
 
   const reportDescriptions: Record<ReportCategory, { title: string; desc: string }> = {
     all: {
@@ -1827,14 +1849,21 @@ function VisitorReportsView({ onSelectPass, userRole }: VisitorReportsViewProps)
   };
 
   const loadReportData = useCallback(async () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+    const currentRequestId = ++requestCounterRef.current;
+
     setLoading(true);
     try {
       const token = await getAccessToken();
       const params = new URLSearchParams();
-      params.set('pageSize', '250');
+      params.set('pageSize', '50');
       if (reportDateFrom) params.set('dateFrom', reportDateFrom);
       if (reportDateTo) params.set('dateTo', reportDateTo);
-      if (['campus_exit', 'office_visit', 'completed', 'requiring_review'].includes(reportCategory)) {
+      if (['campus_exit', 'office_visit', 'completed', 'requiring_review', 'missing_timeout', 'currently_inside', 'approved_no_arrival'].includes(reportCategory)) {
         params.set('category', reportCategory);
       }
       if (officeFilter && officeFilter !== 'all') {
@@ -1843,15 +1872,19 @@ function VisitorReportsView({ onSelectPass, userRole }: VisitorReportsViewProps)
       if (reviewStatusFilter && reviewStatusFilter !== 'all') {
         params.set('reviewStatus', reviewStatusFilter);
       }
-      if (searchQuery.trim()) {
-        params.set('search', searchQuery.trim());
+      if (debouncedSearchQuery.trim()) {
+        params.set('search', debouncedSearchQuery.trim());
       }
 
       const res = await fetch(`/api/admin/records?${params.toString()}`, {
         headers: { Authorization: `Bearer ${token}` },
+        signal: abortController.signal,
       });
+      if (currentRequestId !== requestCounterRef.current) return;
       if (!res.ok) throw new Error('Failed to load report records');
       const data = await res.json();
+      if (currentRequestId !== requestCounterRef.current) return;
+
       const items: GatePassWithId[] = (data?.passes || []).map(deserializeRecordPass);
 
       if (data?.accountabilitySummary) {
@@ -1859,7 +1892,9 @@ function VisitorReportsView({ onSelectPass, userRole }: VisitorReportsViewProps)
       }
 
       let filtered = items;
-      if (reportCategory === 'missing_timeout') {
+      if (reportCategory === 'office_visit') {
+        filtered = items.filter((p) => p.missingOffice);
+      } else if (reportCategory === 'missing_timeout') {
         filtered = items.filter((p) => p.timeIn != null && p.timeOut == null);
       } else if (reportCategory === 'currently_inside') {
         filtered = items.filter((p) => p.status === 'inside' || (p.timeIn != null && p.timeOut == null));
@@ -1877,13 +1912,82 @@ function VisitorReportsView({ onSelectPass, userRole }: VisitorReportsViewProps)
       }
 
       setReportPasses(filtered);
+      setNextCursor(data?.nextCursor || null);
+      setHasMore(Boolean(data?.hasMore));
+      setTotalReportCount(typeof data?.totalCount === 'number' ? data.totalCount : filtered.length);
     } catch (err: any) {
+      if (err?.name === 'AbortError') return;
       toast.error(err?.message || 'Failed to generate report.');
       setReportPasses([]);
+      setNextCursor(null);
+      setHasMore(false);
+      setTotalReportCount(0);
     } finally {
-      setLoading(false);
+      if (currentRequestId === requestCounterRef.current) {
+        setLoading(false);
+      }
     }
-  }, [reportCategory, reportDateFrom, reportDateTo, officeFilter, reviewStatusFilter, searchQuery]);
+  }, [reportCategory, reportDateFrom, reportDateTo, officeFilter, reviewStatusFilter, debouncedSearchQuery]);
+
+  const loadMoreReportData = async () => {
+    if (!nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const token = await getAccessToken();
+      const params = new URLSearchParams();
+      params.set('pageSize', '50');
+      params.set('cursor', nextCursor);
+      if (reportDateFrom) params.set('dateFrom', reportDateFrom);
+      if (reportDateTo) params.set('dateTo', reportDateTo);
+      if (['campus_exit', 'office_visit', 'completed', 'requiring_review', 'missing_timeout', 'currently_inside', 'approved_no_arrival'].includes(reportCategory)) {
+        params.set('category', reportCategory);
+      }
+      if (officeFilter && officeFilter !== 'all') {
+        params.set('office', officeFilter);
+      }
+      if (reviewStatusFilter && reviewStatusFilter !== 'all') {
+        params.set('reviewStatus', reviewStatusFilter);
+      }
+      if (debouncedSearchQuery.trim()) {
+        params.set('search', debouncedSearchQuery.trim());
+      }
+
+      const res = await fetch(`/api/admin/records?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error('Failed to load more records');
+      const data = await res.json();
+      const newItems: GatePassWithId[] = (data?.passes || []).map(deserializeRecordPass);
+
+      let filtered = newItems;
+      if (reportCategory === 'office_visit') {
+        filtered = newItems.filter((p) => p.missingOffice);
+      } else if (reportCategory === 'missing_timeout') {
+        filtered = newItems.filter((p) => p.timeIn != null && p.timeOut == null);
+      } else if (reportCategory === 'currently_inside') {
+        filtered = newItems.filter((p) => p.status === 'inside' || (p.timeIn != null && p.timeOut == null));
+      } else if (reportCategory === 'exited_unconfirmed') {
+        filtered = newItems.filter((p) => p.timeOut != null && p.attendanceStatus !== 'confirmed');
+      } else if (reportCategory === 'specific_unconfirmed') {
+        filtered = newItems.filter(
+          (p) =>
+            (p.visitType === 'specific_person' || p.approvalStatus === 'approved') &&
+            p.timeIn != null &&
+            p.attendanceStatus !== 'confirmed'
+        );
+      } else if (reportCategory === 'approved_no_arrival') {
+        filtered = newItems.filter((p) => (p.status === 'issued' || p.approvalStatus === 'approved') && p.timeIn == null);
+      }
+
+      setReportPasses((prev) => [...prev, ...filtered]);
+      setNextCursor(data?.nextCursor || null);
+      setHasMore(Boolean(data?.hasMore));
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to load more records.');
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   useEffect(() => {
     void loadReportData();
@@ -1907,6 +2011,7 @@ function VisitorReportsView({ onSelectPass, userRole }: VisitorReportsViewProps)
 
   function openResolutionModal(pass: GatePassWithId) {
     setSelectedPassForResolution(pass);
+    resolutionRequestIdRef.current = crypto.randomUUID();
     if (pass.missingOffice && !pass.missingExit) {
       setResolutionTab('confirm_office_visit');
     } else if (pass.missingExit) {
@@ -1936,6 +2041,7 @@ function VisitorReportsView({ onSelectPass, userRole }: VisitorReportsViewProps)
         action: resolutionTab,
         passId: selectedPassForResolution.id,
         reason: resolutionReason.trim(),
+        requestId: resolutionRequestIdRef.current,
       };
       if (resolutionTab === 'record_verified_exit') {
         body.exitTime = verifiedExitTime ? new Date(verifiedExitTime).toISOString() : new Date().toISOString();
@@ -1974,13 +2080,74 @@ function VisitorReportsView({ onSelectPass, userRole }: VisitorReportsViewProps)
   }
 
   async function handleExportReport(format: 'csv' | 'xlsx' | 'pdf') {
-    if (reportPasses.length === 0) {
-      toast.error('No matching records to export.');
-      return;
-    }
     setExporting(true);
     setExportFormat(format);
     try {
+      const exportResult = await collectCursorPages<GatePassWithId, string>(
+        async (cursor, pageSize) => {
+          const token = await getAccessToken();
+          const params = new URLSearchParams();
+          params.set('pageSize', String(pageSize));
+          if (cursor) params.set('cursor', cursor);
+          if (reportDateFrom) params.set('dateFrom', reportDateFrom);
+          if (reportDateTo) params.set('dateTo', reportDateTo);
+          if (['campus_exit', 'office_visit', 'completed', 'requiring_review', 'missing_timeout', 'currently_inside', 'approved_no_arrival'].includes(reportCategory)) {
+            params.set('category', reportCategory);
+          }
+          if (officeFilter && officeFilter !== 'all') {
+            params.set('office', officeFilter);
+          }
+          if (reviewStatusFilter && reviewStatusFilter !== 'all') {
+            params.set('reviewStatus', reviewStatusFilter);
+          }
+          if (debouncedSearchQuery.trim()) {
+            params.set('search', debouncedSearchQuery.trim());
+          }
+
+          const res = await fetch(`/api/admin/records?${params.toString()}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!res.ok) throw new Error('Failed to fetch records for export');
+          const data = await res.json();
+          let items: GatePassWithId[] = (data?.passes || []).map(deserializeRecordPass);
+
+          if (reportCategory === 'office_visit') {
+            items = items.filter((p) => p.missingOffice);
+          } else if (reportCategory === 'missing_timeout') {
+            items = items.filter((p) => p.timeIn != null && p.timeOut == null);
+          } else if (reportCategory === 'currently_inside') {
+            items = items.filter((p) => p.status === 'inside' || (p.timeIn != null && p.timeOut == null));
+          } else if (reportCategory === 'exited_unconfirmed') {
+            items = items.filter((p) => p.timeOut != null && p.attendanceStatus !== 'confirmed');
+          } else if (reportCategory === 'specific_unconfirmed') {
+            items = items.filter(
+              (p) =>
+                (p.visitType === 'specific_person' || p.approvalStatus === 'approved') &&
+                p.timeIn != null &&
+                p.attendanceStatus !== 'confirmed'
+            );
+          } else if (reportCategory === 'approved_no_arrival') {
+            items = items.filter((p) => (p.status === 'issued' || p.approvalStatus === 'approved') && p.timeIn == null);
+          }
+
+          return {
+            items,
+            nextCursor: data?.nextCursor || undefined,
+          };
+        },
+        { pageSize: 250 },
+      );
+
+      const passesToExport = exportResult.items;
+      if (passesToExport.length === 0) {
+        toast.error('No matching records to export.');
+        return;
+      }
+
+      if (exportResult.truncated) {
+        toast.warning(`Export capped at ${EXPORT_MAX_ROWS.toLocaleString()} records. Narrow your filters for an untruncated export.`);
+      }
+
       const info = reportDescriptions[reportCategory];
       const filename = `visitor_accountability_report_${reportCategory}_${formatManilaFileTimestamp(new Date())}`;
       const columns = [
@@ -2006,7 +2173,7 @@ function VisitorReportsView({ onSelectPass, userRole }: VisitorReportsViewProps)
         { header: 'Exit Verification', key: 'exitVerification', width: 18 },
       ];
 
-      const rows = reportPasses.map((r) => {
+      const rows = passesToExport.map((r) => {
         let missingFlags = 'None';
         if (r.bothMissing) {
           missingFlags = 'Both: No Recorded Exit & Office Visit Not Recorded';
@@ -2074,7 +2241,7 @@ function VisitorReportsView({ onSelectPass, userRole }: VisitorReportsViewProps)
       } else {
         await exportReportToPdf(reportOpts);
       }
-      toast.success(`Exported ${reportPasses.length} records to ${format.toUpperCase()}.`);
+      toast.success(`Exported ${passesToExport.length} records to ${format.toUpperCase()}.`);
     } catch (err: any) {
       toast.error(err?.message || `Failed to export ${format.toUpperCase()} report.`);
     } finally {
@@ -2096,7 +2263,7 @@ function VisitorReportsView({ onSelectPass, userRole }: VisitorReportsViewProps)
           </span>
         </div>
         <span className="font-semibold text-[var(--color-text-primary)]">
-          {reportPasses.length} {reportPasses.length === 1 ? 'record' : 'records'} matching current view
+          {totalReportCount > 0 ? `${totalReportCount} ${totalReportCount === 1 ? 'record' : 'records'}` : `${reportPasses.length} ${reportPasses.length === 1 ? 'record' : 'records'}`} matching current view
         </span>
       </div>
 
@@ -2421,7 +2588,7 @@ function VisitorReportsView({ onSelectPass, userRole }: VisitorReportsViewProps)
         </div>
         <div className="flex items-center gap-2">
           <span className="rounded-full bg-[#7A0A0A]/10 px-3 py-1 text-xs font-bold text-[#7A0A0A]">
-            {reportPasses.length} {reportPasses.length === 1 ? 'Record' : 'Records'} Found
+            {totalReportCount > 0 ? totalReportCount : reportPasses.length} {(totalReportCount > 0 ? totalReportCount : reportPasses.length) === 1 ? 'Record' : 'Records'} Found
           </span>
         </div>
       </div>
@@ -2606,6 +2773,21 @@ function VisitorReportsView({ onSelectPass, userRole }: VisitorReportsViewProps)
             ))}
           </tbody>
         </DataTable>
+      )}
+
+      {/* Load More Button */}
+      {hasMore && (
+        <div className="flex justify-center pt-2">
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => void loadMoreReportData()}
+            loading={loadingMore}
+            disabled={loadingMore}
+          >
+            Load More Records ({reportPasses.length} of {totalReportCount})
+          </Button>
+        </div>
       )}
 
       {/* Review & Resolution Modal (Super Admin) */}

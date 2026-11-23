@@ -429,7 +429,7 @@ async function handleRequest(request: Request): Promise<Response> {
       const { data: settingsData } = await admin
         .from('app_settings')
         .select('visitor_instructions')
-        .eq('id', 1)
+        .eq('singleton', true)
         .maybeSingle();
 
       const visitorInstructions: string[] | undefined = Array.isArray(settingsData?.visitor_instructions)
