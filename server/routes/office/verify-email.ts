@@ -1,11 +1,11 @@
-import { randomInt, createHash, createHmac } from 'node:crypto';
+import { randomInt, createHash, createHmac, randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { getServerSupabaseClients } from '../../supabase.js';
 import { getVerifiedSessionContext, HttpError } from '../../actors.js';
 import { jsonResponse, readBearerToken } from '../../http.js';
 import { sendResendEmail, EmailDeliveryError } from '../../email.js';
 import { renderVerificationCodeEmail } from '../../templates/index.js';
-import { getOfficeTokenSecret, createEmailVerificationProofToken } from '../../lib/office.js';
+import { getOfficeTokenSecret } from '../../lib/office.js';
 import { getTrustedClientIp } from '../../lib/clientIp.js';
 
 const emailRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
@@ -159,9 +159,9 @@ export async function handleRequest(request: Request): Promise<Response> {
       });
     }
 
-    // Generate HMAC token matching server/lib/office.ts and verifyEmailVerificationProofToken
-    const hmacProofToken = createEmailVerificationProofToken(normalizedEmail, session.user.id);
-    const proofDigest = createHash('sha256').update(hmacProofToken).digest('hex');
+    // Generate 32-byte opaque proof token and store SHA-256 digest in office_visit_verification_proofs
+    const proofToken = randomBytes(32).toString('hex');
+    const proofDigest = createHash('sha256').update(proofToken).digest('hex');
     const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString(); // 1 hour TTL
 
     // Store proof digest in office_visit_verification_proofs
@@ -185,8 +185,8 @@ export async function handleRequest(request: Request): Promise<Response> {
     return jsonResponse(200, {
       ok: true,
       email: normalizedEmail,
-      proofToken: hmacProofToken,
-      emailVerificationToken: hmacProofToken,
+      proofToken,
+      emailVerificationToken: proofToken,
       message: 'Email verified successfully.',
     });
   }

@@ -108,33 +108,59 @@ begin
     execute 'delete from public.staff_mfa_factors where user_id = $1' using requested_target_uid;
   end if;
 
-  delete from public.staff_backup_codes where user_id = requested_target_uid;
-  delete from public.staff_passwords where user_id = requested_target_uid;
+  if to_regclass('public.user_sessions') is not null then
+    execute 'delete from public.user_sessions where user_id = $1' using requested_target_uid;
+  end if;
 
-  -- 9. Anonymize/tombstone or delete the staff profile record
+  -- 9. Set null on transactional tables to preserve historical record integrity
+  update public.passes set decided_by = null where decided_by = requested_target_uid;
+  update public.visit_events set guard_id = null where guard_id = requested_target_uid;
+  update public.incident_holds set created_by = null where created_by = requested_target_uid;
+  update public.incident_holds set released_by = null where released_by = requested_target_uid;
+  update public.office_provisioning_operations set actor_id = null where actor_id = requested_target_uid;
+
+  -- 10. Delete staff profile record
   delete from public.staff_profiles where user_id = requested_target_uid;
 
-  -- 10. Record immutable audit event
-  perform api.record_audit_event(
+  -- 11. Record administrative audit event
+  insert into public.audit_events (
+    actor_id,
+    actor_kind,
+    actor_role,
+    action,
+    target_type,
+    target_id,
+    request_id,
+    before_state,
+    after_state,
+    outcome
+  ) values (
     requested_actor_id,
     'staff',
-    v_actor_role::text,
-    'staff_account_deleted',
-    'staff_profiles',
+    'superadmin',
+    'staff.account_deleted',
+    'staff_profile',
     requested_target_uid::text,
     requested_request_id,
     jsonb_build_object(
-      'deleted_role', v_target.role,
-      'deleted_full_name', v_target.full_name,
-      'target_uid', requested_target_uid
-    )
+      'name', v_target.display_name,
+      'role', v_target.role,
+      'active', v_target.active,
+      'decommissioned_at', v_target.decommissioned_at,
+      'decommission_reason', v_target.decommission_reason
+    ),
+    jsonb_build_object(
+      'deleted', true,
+      'deleted_at', now()
+    ),
+    'success'
   );
 
   return jsonb_build_object(
     'ok', true,
-    'action', 'staff_deleted',
-    'target_uid', requested_target_uid,
-    'deleted_role', v_target.role
+    'deleted', true,
+    'userId', requested_target_uid,
+    'displayName', v_target.display_name
   );
 end;
 $$;

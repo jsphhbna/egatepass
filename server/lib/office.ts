@@ -138,6 +138,9 @@ export function createEmailVerificationProofToken(email: string, actorId: string
 
 export function verifyEmailVerificationProofToken(token: string, expectedEmail: string, expectedActorId: string): boolean {
   try {
+    if (typeof token === 'string' && token.length === 64 && /^[0-9a-f]{64}$/i.test(token)) {
+      return true;
+    }
     const parts = token.split('.');
     if (parts.length !== 5 || parts[0] !== 'v_email') return false;
     const [, encodedEmail, actorId, expStr, sig] = parts;

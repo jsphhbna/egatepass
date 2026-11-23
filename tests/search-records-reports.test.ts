@@ -32,9 +32,10 @@ describe('Search & Records Deep-Dive Repair Tests', () => {
       expect(emailPassSrc).toContain(".eq('singleton', true)");
     });
 
-    it('ensures verify-email.ts generates canonical v_email proof tokens matching passes/issue.ts expectation', () => {
-      expect(verifyEmailSrc).toContain('createEmailVerificationProofToken');
-      expect(verifyEmailSrc).toContain('createHash(\'sha256\')');
+    it('ensures verify-email.ts generates single-use proof token and stores SHA-256 digest in office_visit_verification_proofs', () => {
+      expect(verifyEmailSrc).toContain("randomBytes(32).toString('hex')");
+      expect(verifyEmailSrc).toContain("createHash('sha256')");
+      expect(verifyEmailSrc).toContain('office_visit_verification_proofs');
     });
 
     it('ensures server/lib/accountability.ts encapsulates api.get_accountability_summary', () => {
