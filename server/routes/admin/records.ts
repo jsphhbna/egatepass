@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { HttpError, requireStaffActor } from '../../actors.js';
 import { decodeCursorStrict, encodeCursor } from '../../cursor.js';
 import { jsonResponse, readBearerToken } from '../../http.js';
+import { resolveVisitorAccountability } from '../../lib/accountability.js';
 import { assignPassExpectedGate } from '../../lib/office.js';
 import { getServerSupabaseClients } from '../../supabase.js';
 
@@ -726,15 +727,15 @@ async function handlePost(request: Request): Promise<Response> {
     const exceptionType = payload.action === 'record_exception' ? payload.exceptionType : null;
     const gate = payload.action === 'record_verified_exit' ? payload.gate || null : null;
 
-    const { data, error } = await admin.schema('api').rpc('resolve_visitor_accountability', {
-      requested_actor_id: actor.id,
-      requested_pass_id: payload.passId,
-      requested_action: payload.action,
-      requested_reason: requestedReason,
-      requested_event_time: eventTime,
-      requested_exception_type: exceptionType,
-      requested_gate: gate,
-      requested_request_id: clientRequestId,
+    const { data, error } = await resolveVisitorAccountability(admin, {
+      actorId: actor.id,
+      passId: payload.passId,
+      action: payload.action,
+      reason: requestedReason,
+      eventTime,
+      exceptionType,
+      gate,
+      requestId: clientRequestId,
     });
 
     if (error) {
