@@ -406,7 +406,8 @@ async function handleRequest(request: Request): Promise<Response> {
       : '17:00';
 
     const turnstileSiteKeyConfigured = Boolean(process.env.VITE_TURNSTILE_SITE_KEY?.trim());
-    const turnstileVerifierConfigured = Boolean(process.env.TURNSTILE_SECRET_KEY?.trim());
+    // Turnstile server-side secret verification is managed by Supabase Auth Attack Protection
+    const turnstileVerifierConfigured = turnstileSiteKeyConfigured;
 
     let systemResetStatus: any = { isLocked: false, status: 'idle', activeOperation: null };
     try {

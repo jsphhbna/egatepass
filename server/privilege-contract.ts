@@ -371,6 +371,7 @@ export const SERVER_DIRECT_TABLE_OPERATIONS: DirectServerTableOperation[] = [
   { file: 'server/routes/passes/capabilities.ts', table: 'app_settings', operations: ['SELECT'], purpose: 'Serve public-safe portal registration config and retention summary without exposing sensitive policy internals' },
   { file: 'server/routes/passes/email.ts', table: 'app_settings', operations: ['SELECT'], purpose: 'Read configured visitor instructions for email' },
   { file: 'server/routes/passes/issue.ts', table: 'upload_intents', operations: ['SELECT'], purpose: 'Validate photo/ID upload intents belong to session' },
+  { file: 'server/routes/passes/issue.ts', table: 'office_visit_verification_proofs', operations: ['SELECT'], purpose: 'Validate opaque email verification proof digest against session and email when supplied' },
   { file: 'server/routes/passes/issue.ts', table: 'portal_identity_verification_attempts', operations: ['SELECT'], purpose: 'Verify unexpired matched biometric attempt exists for portal pass issuance' },
   { file: 'server/routes/passes/issue.ts', table: 'offices', operations: ['SELECT'], purpose: 'Verify selected destination office is active, published, and check approval-before-pass policy' },
   { file: 'server/routes/passes/issue.ts', table: 'office_visits', operations: ['SELECT'], purpose: 'Check existing pre-approval visit request by request_id on idempotent replay' },

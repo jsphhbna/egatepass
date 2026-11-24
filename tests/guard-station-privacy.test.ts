@@ -45,8 +45,9 @@ describe('Guard Station Privacy & Data Minimization Contracts', () => {
     // Must be in operational entered status (inside, exited)
     expect(evidenceSource).toContain(".in('status', ['inside', 'exited'])");
 
-    // Must be confined to station gate
-    expect(evidenceSource).toContain(".eq('gate', stationDevice.gate)");
+    // Must be confined to station gate (case-insensitive normalized comparison)
+    expect(evidenceSource).toContain("const normalizedStationGate = stationDevice.gate.trim().toLowerCase()");
+    expect(evidenceSource).toContain("station_gate_unauthorized");
   });
 
   it('4. Evidence endpoint denies human guard staff actor and restricts to admin/superadmin', () => {

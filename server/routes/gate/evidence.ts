@@ -102,15 +102,20 @@ async function handleRequest(request: Request): Promise<Response> {
           }
         }
 
-        const { count, error: passError } = await admin.from('passes').select('id', { count: 'exact', head: true })
+        const { data: matchingPasses, error: passError } = await admin
+          .from('passes')
+          .select('id, gate')
           .in('visitor_id', targetVisitorIds)
-          .eq('gate', stationDevice.gate)
           .eq('source', 'portal')
           .not('entry_scanned_at', 'is', null)
           .in('status', ['inside', 'exited']);
         // (Legacy human guard operational verification previously checked: .eq('status', 'pending'))
         if (passError) throw passError;
-        if (!count) return jsonResponse(403, { error: 'Evidence is not operationally accessible at this station', code: 'station_gate_unauthorized' });
+        const normalizedStationGate = stationDevice.gate.trim().toLowerCase();
+        const hasStationPass = (matchingPasses || []).some(
+          (p: { gate?: string | null }) => (p.gate ?? '').trim().toLowerCase() === normalizedStationGate,
+        );
+        if (!hasStationPass) return jsonResponse(403, { error: 'Evidence is not operationally accessible at this station', code: 'station_gate_unauthorized' });
       } else if (evidence.kind === 'vehicle_photo') {
         if (isExpired) {
           return jsonResponse(410, { error: 'Evidence expired', code: 'evidence_retention_expired' });
@@ -140,7 +145,7 @@ async function handleRequest(request: Request): Promise<Response> {
         if (
           !exactPass ||
           exactPass.visitor_id !== evidence.visitor_id ||
-          exactPass.gate !== stationDevice.gate ||
+          (exactPass.gate ?? '').trim().toLowerCase() !== stationDevice.gate.trim().toLowerCase() ||
           exactPass.source !== 'portal' ||
           !exactPass.entry_scanned_at ||
           !['inside', 'exited'].includes(exactPass.status)

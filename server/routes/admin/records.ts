@@ -289,6 +289,67 @@ function mapPass(row: RawRecordPassRow, closingHours = '17:00', nowMs = Date.now
   };
 }
 
+function matchesDerivedRecordFilters(
+  mapped: ReturnType<typeof mapPass>,
+  filters: {
+    categoryParam: string | null;
+    officeParam: string | null;
+    reviewStatusParam: string | null;
+  },
+): boolean {
+  const { categoryParam, officeParam, reviewStatusParam } = filters;
+
+  if (categoryParam) {
+    if (categoryParam === 'campus_exit' && !mapped.missingExit) return false;
+    if (categoryParam === 'office_visit' && !mapped.missingOffice) return false;
+    if (categoryParam === 'completed' && !mapped.isCompleted) return false;
+    if (categoryParam === 'requiring_review' && !((mapped.missingExit || mapped.missingOffice) && mapped.accountabilityStatus === 'pending')) {
+      return false;
+    }
+    if (categoryParam === 'missing_timeout' && !(mapped.timeIn != null && mapped.timeOut == null)) return false;
+    if (categoryParam === 'currently_inside' && !(mapped.status === 'inside' || (mapped.timeIn != null && mapped.timeOut == null))) {
+      return false;
+    }
+    if (categoryParam === 'exited_unconfirmed') {
+      const hasOffice = Boolean(
+        mapped.destinationOffice
+          && mapped.destinationOffice.trim() !== ''
+          && mapped.destinationOffice.toLowerCase() !== 'general campus',
+      );
+      const isConfirmed =
+        mapped.attendanceStatus === 'confirmed'
+        || mapped.attendanceStatus === 'completed'
+        || Boolean(mapped.officeConfirmedAt);
+      if (!(mapped.hasEntered && mapped.hasExited && hasOffice && !isConfirmed)) return false;
+    }
+    if (categoryParam === 'specific_unconfirmed') {
+      const isConfirmed =
+        mapped.attendanceStatus === 'confirmed'
+        || mapped.attendanceStatus === 'completed'
+        || Boolean(mapped.officeConfirmedAt);
+      if (!(mapped.visitType === 'specific_person' && mapped.hasEntered && !isConfirmed)) return false;
+    }
+    if (categoryParam === 'approved_no_arrival') {
+      if (!((mapped.status === 'issued' || mapped.approvalStatus === 'approved') && !mapped.hasEntered)) {
+        return false;
+      }
+    }
+  }
+
+  if (officeParam && officeParam !== 'all') {
+    const matchesOffice =
+      mapped.destinationOffice?.toLowerCase() === officeParam.toLowerCase()
+      || mapped.destinationOfficeId === officeParam;
+    if (!matchesOffice) return false;
+  }
+
+  if (reviewStatusParam && reviewStatusParam !== 'all') {
+    if (mapped.accountabilityStatus !== reviewStatusParam) return false;
+  }
+
+  return true;
+}
+
 function mapOfflineRecord(row: RawOfflineRecordRow) {
   return {
     id: row.id,
@@ -390,10 +451,14 @@ async function handleGet(request: Request): Promise<Response> {
     let truncated = false;
 
     if (mode === 'standard' || mode === 'all' || mode === 'accountability') {
-      let query = admin
-        .from('passes')
-        .select(
-          `
+      const executeStandardBatch = async (
+        batchCursor: { timestamp: string; id: string | null } | null,
+        batchLimit: number,
+      ) => {
+        let query = admin
+          .from('passes')
+          .select(
+            `
           id,
           visitor_id,
           source,
@@ -461,95 +526,181 @@ async function handleGet(request: Request): Promise<Response> {
             actor_id
           )
         `,
-          { count: 'exact' },
-        )
-        .order('issued_at', { ascending: false })
-        .order('id', { ascending: false });
+            { count: 'exact' },
+          )
+          .order('issued_at', { ascending: false })
+          .order('id', { ascending: false });
 
-      if (statusParam) {
-        const statuses = statusParam.split(',').map((s) => s.trim()).filter(Boolean);
-        if (statuses.length === 1) {
-          query = query.eq('status', statuses[0]);
-        } else if (statuses.length > 1) {
-          query = query.in('status', statuses);
+        if (statusParam) {
+          const statuses = statusParam.split(',').map((s) => s.trim()).filter(Boolean);
+          if (statuses.length === 1) {
+            query = query.eq('status', statuses[0]);
+          } else if (statuses.length > 1) {
+            query = query.in('status', statuses);
+          }
         }
-      }
 
-      if (dateFromParam) {
-        query = query.gte('visitors.visit_date', dateFromParam);
-      }
-      if (dateToParam) {
-        query = query.lte('visitors.visit_date', dateToParam);
-      }
+        if (dateFromParam) {
+          query = query.gte('visitors.visit_date', dateFromParam);
+        }
+        if (dateToParam) {
+          query = query.lte('visitors.visit_date', dateToParam);
+        }
 
-      if (searchParam) {
-        const cleanedSearch = searchParam.replace(/[,()]/g, ' ').trim();
-        if (cleanedSearch) {
-          const digits = cleanedSearch.replace(/\D/g, '');
-          const orConditions = [
-            `full_name.ilike.%${cleanedSearch}%`,
-            `purpose.ilike.%${cleanedSearch}%`,
-          ];
-          if (digits.length >= 4) {
-            orConditions.push(`contact_number.ilike.%${digits}%`);
-            if (digits.startsWith('09') && digits.length >= 5) {
-              orConditions.push(`contact_number.ilike.%+63${digits.slice(1)}%`);
-            } else if (digits.startsWith('639') && digits.length >= 6) {
-              orConditions.push(`contact_number.ilike.%0${digits.slice(2)}%`);
+        if (searchParam) {
+          const cleanedSearch = searchParam.replace(/[,()]/g, ' ').trim();
+          if (cleanedSearch) {
+            const digits = cleanedSearch.replace(/\D/g, '');
+            const orConditions = [
+              `full_name.ilike.%${cleanedSearch}%`,
+              `purpose.ilike.%${cleanedSearch}%`,
+            ];
+            if (digits.length >= 4) {
+              orConditions.push(`contact_number.ilike.%${digits}%`);
+              if (digits.startsWith('09') && digits.length >= 5) {
+                orConditions.push(`contact_number.ilike.%+63${digits.slice(1)}%`);
+              } else if (digits.startsWith('639') && digits.length >= 6) {
+                orConditions.push(`contact_number.ilike.%0${digits.slice(2)}%`);
+              }
+            }
+            query = query.or(orConditions.join(','), { referencedTable: 'visitors' });
+          }
+        }
+
+        if (reviewStatusParam && reviewStatusParam !== 'all') {
+          query = query.eq('accountability_status', reviewStatusParam);
+        }
+
+        if (categoryParam) {
+          if (categoryParam === 'campus_exit') {
+            query = query.or('time_in.not.is.null,entry_scanned_at.not.is.null,status.in.(inside,exited)').is('time_out', null).neq('status', 'exited');
+          } else if (categoryParam === 'completed') {
+            query = query.or('status.eq.exited,time_out.not.is.null');
+          } else if (categoryParam === 'missing_timeout') {
+            query = query.not('time_in', 'is', null).is('time_out', null);
+          } else if (categoryParam === 'currently_inside') {
+            query = query.or('status.eq.inside,and(time_in.not.is.null,time_out.is.null)');
+          } else if (categoryParam === 'approved_no_arrival') {
+            query = query.in('status', ['issued', 'approved']).is('time_in', null).is('entry_scanned_at', null);
+          } else if (categoryParam === 'requiring_review') {
+            query = query.eq('accountability_status', 'pending');
+          }
+        }
+
+        if (batchCursor) {
+          if (batchCursor.id) {
+            query = query.or(`issued_at.lt.${batchCursor.timestamp},and(issued_at.eq.${batchCursor.timestamp},id.lt.${batchCursor.id})`);
+          } else {
+            query = query.lt('issued_at', batchCursor.timestamp);
+          }
+        }
+
+        query = query.limit(batchLimit);
+        const { data: rawRows, count, error } = await query;
+        if (error) throw error;
+        return {
+          rows: (rawRows ?? []) as unknown as RawRecordPassRow[],
+          count: typeof count === 'number' ? count : null,
+        };
+      };
+
+      const needsDerivedBatchScan = Boolean(
+        categoryParam
+          || (officeParam && officeParam !== 'all')
+          || (reviewStatusParam && reviewStatusParam !== 'all'),
+      );
+
+      if (!needsDerivedBatchScan) {
+        const initialCursor = decodedCursor
+          ? { timestamp: decodedCursor.timestamp, id: decodedCursor.id ?? null }
+          : null;
+        const { rows, count } = await executeStandardBatch(
+          initialCursor,
+          exportAll ? EXPORT_MAX_ROWS : pageSize + 1,
+        );
+        const mappedRows = rows.map((r) => mapPass(r, closingHours, nowMs));
+
+        if (exportAll) {
+          passes = mappedRows.slice(0, EXPORT_MAX_ROWS);
+          totalCount = count ?? passes.length;
+          truncated = totalCount > EXPORT_MAX_ROWS;
+        } else {
+          hasMore = mappedRows.length > pageSize;
+          const returnRows = hasMore ? mappedRows.slice(0, pageSize) : mappedRows;
+          passes = returnRows;
+          const lastRow = rows[returnRows.length - 1];
+          nextCursor = hasMore && lastRow ? encodeCursor(lastRow.issued_at, lastRow.id) : null;
+          totalCount = count ?? passes.length;
+        }
+      } else {
+        const targetLimit = exportAll ? EXPORT_MAX_ROWS : pageSize;
+        const collected: ReturnType<typeof mapPass>[] = [];
+        let batchCursor: { timestamp: string; id: string | null } | null = decodedCursor
+          ? { timestamp: decodedCursor.timestamp, id: decodedCursor.id ?? null }
+          : null;
+        let lastBatchCursorKey = '';
+        let scannedTotal = 0;
+        let exhausted = false;
+        let firstCount: number | null = null;
+        const batchSize = exportAll ? EXPORT_MAX_ROWS : Math.min(250, Math.max(pageSize * 3, 150));
+
+        while (collected.length < targetLimit + 1 && scannedTotal < EXPORT_MAX_ROWS) {
+          const remainingBudget = EXPORT_MAX_ROWS - scannedTotal;
+          const currentBatchLimit = Math.min(batchSize, remainingBudget);
+          if (currentBatchLimit <= 0) break;
+
+          const { rows, count } = await executeStandardBatch(batchCursor, currentBatchLimit);
+          if (firstCount === null && count !== null) firstCount = count;
+          if (rows.length === 0) {
+            exhausted = true;
+            break;
+          }
+
+          scannedTotal += rows.length;
+          for (const rawRow of rows) {
+            const mapped = mapPass(rawRow, closingHours, nowMs);
+            if (
+              matchesDerivedRecordFilters(mapped, {
+                categoryParam: categoryParam ?? null,
+                officeParam: officeParam ?? null,
+                reviewStatusParam: reviewStatusParam ?? null,
+              })
+            ) {
+              collected.push(mapped);
+              if (collected.length >= targetLimit + 1) break;
             }
           }
-          query = query.or(orConditions.join(','), { referencedTable: 'visitors' });
+
+          if (rows.length < currentBatchLimit) {
+            exhausted = true;
+            break;
+          }
+
+          const lastFetched = rows[rows.length - 1];
+          if (!lastFetched) {
+            exhausted = true;
+            break;
+          }
+          const nextBatchCursorKey = `${lastFetched.issued_at}:${lastFetched.id}`;
+          if (nextBatchCursorKey === lastBatchCursorKey) {
+            exhausted = true;
+            break;
+          }
+          lastBatchCursorKey = nextBatchCursorKey;
+          batchCursor = { timestamp: lastFetched.issued_at, id: lastFetched.id };
         }
-      }
 
-      if (reviewStatusParam && reviewStatusParam !== 'all') {
-        query = query.eq('accountability_status', reviewStatusParam);
-      }
-
-      if (categoryParam) {
-        if (categoryParam === 'campus_exit') {
-          query = query.or('time_in.not.is.null,entry_scanned_at.not.is.null,status.in.(inside,exited)').is('time_out', null).neq('status', 'exited');
-        } else if (categoryParam === 'completed') {
-          query = query.or('status.eq.exited,time_out.not.is.null');
-        } else if (categoryParam === 'missing_timeout') {
-          query = query.not('time_in', 'is', null).is('time_out', null);
-        } else if (categoryParam === 'currently_inside') {
-          query = query.or('status.eq.inside,and(time_in.not.is.null,time_out.is.null)');
-        } else if (categoryParam === 'approved_no_arrival') {
-          query = query.in('status', ['issued', 'approved']).is('time_in', null).is('entry_scanned_at', null);
-        } else if (categoryParam === 'requiring_review') {
-          query = query.eq('accountability_status', 'pending');
-        }
-      }
-
-      if (cursor) {
-        const decoded = decodeCursorStrict(cursor, { idType: 'uuid' })!;
-        if (decoded.id) {
-          query = query.or(`issued_at.lt.${decoded.timestamp},and(issued_at.eq.${decoded.timestamp},id.lt.${decoded.id})`);
+        if (exportAll) {
+          passes = collected.slice(0, EXPORT_MAX_ROWS);
+          totalCount = passes.length;
+          truncated = !exhausted && collected.length >= EXPORT_MAX_ROWS;
         } else {
-          query = query.lt('issued_at', decoded.timestamp);
+          hasMore = collected.length > targetLimit;
+          passes = hasMore ? collected.slice(0, targetLimit) : collected;
+          const lastReturned = passes[passes.length - 1];
+          nextCursor = hasMore && lastReturned ? encodeCursor(lastReturned.issuedAt, lastReturned.id) : null;
+          totalCount = !decodedCursor && !hasMore ? passes.length : Math.max(passes.length, firstCount ?? passes.length);
         }
-      }
-
-      query = query.limit(exportAll ? EXPORT_MAX_ROWS : pageSize + 1);
-
-      const { data: rawRows, count, error } = await query;
-      if (error) throw error;
-
-      const rows = (rawRows ?? []) as unknown as RawRecordPassRow[];
-      const mappedRows = rows.map((r) => mapPass(r, closingHours, nowMs));
-
-      if (exportAll) {
-        passes = mappedRows.slice(0, EXPORT_MAX_ROWS);
-        totalCount = typeof count === 'number' ? count : passes.length;
-        truncated = totalCount > EXPORT_MAX_ROWS;
-      } else {
-        hasMore = mappedRows.length > pageSize;
-        const returnRows = hasMore ? mappedRows.slice(0, pageSize) : mappedRows;
-        passes = returnRows;
-        const lastRow = rows[returnRows.length - 1];
-        nextCursor = hasMore && lastRow ? encodeCursor(lastRow.issued_at, lastRow.id) : null;
-        totalCount = typeof count === 'number' ? count : passes.length;
       }
     }
 
@@ -600,34 +751,7 @@ async function handleGet(request: Request): Promise<Response> {
       };
     }
 
-    // Filter passes by category if explicitly requested
-    if (categoryParam) {
-      if (categoryParam === 'campus_exit') {
-        passes = passes.filter((p) => p.missingExit);
-      } else if (categoryParam === 'office_visit') {
-        passes = passes.filter((p) => p.missingOffice);
-      } else if (categoryParam === 'completed') {
-        passes = passes.filter((p) => p.isCompleted);
-      } else if (categoryParam === 'requiring_review') {
-        passes = passes.filter((p) => (p.missingExit || p.missingOffice) && p.accountabilityStatus === 'pending');
-      } else if (categoryParam === 'missing_timeout') {
-        passes = passes.filter((p) => p.timeIn != null && p.timeOut == null);
-      } else if (categoryParam === 'currently_inside') {
-        passes = passes.filter((p) => p.status === 'inside' || (p.timeIn != null && p.timeOut == null));
-      } else if (categoryParam === 'approved_no_arrival') {
-        passes = passes.filter((p) => (p.status === 'issued' || p.approvalStatus === 'approved') && p.timeIn == null);
-      }
-    }
-
-    // Filter passes by office if specified
-    if (officeParam && officeParam !== 'all') {
-      passes = passes.filter((p) => p.destinationOffice?.toLowerCase() === officeParam.toLowerCase() || p.destinationOfficeId === officeParam);
-    }
-
-    // Filter passes by review status if specified
-    if (reviewStatusParam && reviewStatusParam !== 'all') {
-      passes = passes.filter((p) => p.accountabilityStatus === reviewStatusParam);
-    }
+    // Derived category/office/review filtering already ran before cursor pagination when active
 
     let offlineRecords: ReturnType<typeof mapOfflineRecord>[] = [];
     let offlineNextCursor: string | null = null;
