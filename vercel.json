@@ -8,7 +8,7 @@
   ],
   "functions": {
     "api/passes/[...route].ts": {
-      "includeFiles": "{public/fonts/**,server/models/**,node_modules/onnxruntime-node/bin/napi-v6/linux/x64/**}"
+      "includeFiles": "{public/earist-logo.png,public/fonts/**,server/models/**,node_modules/onnxruntime-node/bin/napi-v6/linux/x64/**}"
     }
   },
   "headers": [

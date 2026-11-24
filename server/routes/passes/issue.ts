@@ -546,14 +546,47 @@ async function handleRequest(request: Request): Promise<Response> {
 
     const normalizedVisitorEmail = parsed.data.visitor.email?.toLowerCase().trim() || null;
     if (parsed.data.emailVerificationToken) {
-      if (
-        !normalizedVisitorEmail
-        || !verifyEmailVerificationProofToken(parsed.data.emailVerificationToken, normalizedVisitorEmail, actorId)
-      ) {
+      if (!normalizedVisitorEmail) {
         return jsonResponse(403, {
           error: 'email_verification_invalid',
           message: 'Email verification proof token is invalid or has expired. Please verify your email.',
         });
+      }
+
+      if (parsed.data.emailVerificationToken.startsWith('v_email.')) {
+        if (!verifyEmailVerificationProofToken(parsed.data.emailVerificationToken, normalizedVisitorEmail, actorId)) {
+          return jsonResponse(403, {
+            error: 'email_verification_invalid',
+            message: 'Email verification proof token is invalid or has expired. Please verify your email.',
+          });
+        }
+      } else {
+        if (!/^[0-9a-f]{64}$/i.test(parsed.data.emailVerificationToken)) {
+          return jsonResponse(403, {
+            error: 'email_verification_invalid',
+            message: 'Email verification proof token is invalid or has expired. Please verify your email.',
+          });
+        }
+        const proofDigest = createHash('sha256').update(parsed.data.emailVerificationToken).digest('hex');
+        const { data: proofRow, error: proofErr } = await admin
+          .from('office_visit_verification_proofs')
+          .select('actor_id, email, expires_at, consumed_at')
+          .eq('proof_digest', proofDigest)
+          .maybeSingle();
+
+        if (
+          proofErr
+          || !proofRow
+          || proofRow.actor_id !== actorId
+          || proofRow.email?.toLowerCase().trim() !== normalizedVisitorEmail
+          || proofRow.consumed_at !== null
+          || new Date(proofRow.expires_at).getTime() <= Date.now()
+        ) {
+          return jsonResponse(403, {
+            error: 'email_verification_invalid',
+            message: 'Email verification proof token is invalid or has expired. Please verify your email.',
+          });
+        }
       }
     }
 

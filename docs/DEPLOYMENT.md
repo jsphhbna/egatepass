@@ -190,7 +190,7 @@ Immediately after deployment:
 2. **Visitor Registration**:
    - Register a visitor pass on the public portal.
    - Complete Turnstile verification.
-   - Capture a photo and valid ID (camera-only).
+   - Capture a live selfie (camera-only) and provide a valid ID (camera capture or supported JPEG, PNG, or WebP upload; Kiosk ID capture is camera-only).
    - Confirm pass issuance displays the QR code.
 3. **Staff / Scanner Authentication**:
    - Log into a scanner device account (e.g. Entry scanner).

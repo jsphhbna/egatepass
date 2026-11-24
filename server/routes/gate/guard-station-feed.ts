@@ -160,11 +160,17 @@ async function handleRequest(request: Request): Promise<Response> {
     // administrator review via /admin/legacy-guard and api.decide_visit before admission.
     const { startUtc, endUtc } = getManilaDayBounds();
 
-    // Query authoritative total count for today
-    const { count: totalCount, error: countErr } = await admin
+    const normalizedStationGatePattern = stationGate.trim().replace(/[\\%_]/g, '\\$&');
+
+    // Query authoritative total count for today (case-insensitive gate matching)
+    let countQuery: any = admin
       .from('passes')
-      .select('id', { count: 'exact', head: true })
-      .eq('gate', stationGate)
+      .select('id', { count: 'exact', head: true });
+    countQuery = typeof countQuery.ilike === 'function'
+      ? countQuery.ilike('gate', normalizedStationGatePattern)
+      : countQuery.eq('gate', stationGate);
+
+    const { count: totalCount, error: countErr } = await countQuery
       .eq('source', 'portal')
       .in('status', ['inside', 'exited'])
       .not('entry_scanned_at', 'is', null)
@@ -173,11 +179,14 @@ async function handleRequest(request: Request): Promise<Response> {
 
     if (countErr) throw countErr;
 
-    // Keyset query with limit + 1
-    let query = admin
+    // Keyset query with limit + 1 (case-insensitive gate matching)
+    let query: any = admin
       .from('passes')
-      .select('id, public_reference, status, source, entry_scanned_at, time_in, time_out, visitor_id, gate')
-      .eq('gate', stationGate)
+      .select('id, public_reference, status, source, entry_scanned_at, time_in, time_out, visitor_id, gate');
+    query = typeof query.ilike === 'function'
+      ? query.ilike('gate', normalizedStationGatePattern)
+      : query.eq('gate', stationGate);
+    query = query
       .eq('source', 'portal')
       .in('status', ['inside', 'exited'])
       .not('entry_scanned_at', 'is', null)
@@ -198,7 +207,17 @@ async function handleRequest(request: Request): Promise<Response> {
     const { data: passes, error: passesError } = await query;
     if (passesError) throw passesError;
 
-    const rawList = passes || [];
+    const rawList = (passes || []) as Array<{
+      id: string;
+      public_reference: string;
+      status: string;
+      source: string;
+      entry_scanned_at: string | null;
+      time_in: string | null;
+      time_out: string | null;
+      visitor_id: string;
+      gate: string | null;
+    }>;
     const hasMore = rawList.length > limit;
     const passList = hasMore ? rawList.slice(0, limit) : rawList;
     const lastItem = passList[passList.length - 1];

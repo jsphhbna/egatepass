@@ -119,7 +119,7 @@ async function issueManifest(admin: any, actor: any): Promise<Response> {
       .maybeSingle(),
     admin
       .from('offices')
-      .select('id, name, code, requires_approval_before_pass')
+      .select('id, name, requires_approval_before_pass')
       .eq('active', true)
       .eq('publication_status', 'published')
       .is('archived_at', null)
@@ -149,7 +149,7 @@ async function issueManifest(admin: any, actor: any): Promise<Response> {
   const offices = (officesRes.data || []).map((row: any) => ({
     id: row.id as string,
     name: row.name as string,
-    code: (row.code as string | null) ?? null,
+    code: null,
     requiresApprovalBeforePass: Boolean(row.requires_approval_before_pass),
   }));
   const officeMap = new Map<string, any>(offices.map((o: any) => [o.id, o]));

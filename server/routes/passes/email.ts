@@ -337,7 +337,13 @@ async function handleRequest(request: Request): Promise<Response> {
         });
 
         providerAttempted = true;
-        const sent = await sendResendEmail({ to: recipient, subject: 'EARIST Gate Pass — Verification Code', html });
+        const sent = await sendResendEmail({
+          to: recipient,
+          subject: 'EARIST Gate Pass — Verification Code',
+          html,
+          idempotencyKey: `pass-email-otp-${state.verification_id}-${parsed.data.requestId}`,
+          correlationId: state.verification_id,
+        });
         const finalResult = await finalizeCodeDelivery(admin, state.verification_id, parsed.data.requestId, 'sent_to_provider', sent.id);
         if (!finalResult.success) {
           const conflict = finalResult.matchStatus === 'terminal_conflict';
@@ -451,6 +457,8 @@ async function handleRequest(request: Request): Promise<Response> {
         to: recipient,
         subject: 'Your EARIST E-GatePass',
         html,
+        idempotencyKey: `pass-email-dispatch-${verificationId}-${requestId}`,
+        correlationId: verificationId,
         attachments: [{ filename, content: passBase64 }],
       });
       const finalResult = await finalizeDispatch(admin, verificationId, requestId, 'sent_to_provider', sent.id);

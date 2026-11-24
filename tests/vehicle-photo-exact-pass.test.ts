@@ -40,8 +40,8 @@ describe('Vehicle Photo Exact-Pass Confinement Security (Section 6)', () => {
     expect(evidenceSource).toContain(".from('passes')");
     expect(evidenceSource).toContain(".eq('id', decl.pass_id)");
 
-    // 4. Must enforce exact pass gate matches station device gate
-    expect(evidenceSource).toContain("exactPass.gate !== stationDevice.gate");
+    // 4. Must enforce exact pass gate matches station device gate (case-insensitive normalized)
+    expect(evidenceSource).toContain("(exactPass.gate ?? '').trim().toLowerCase() !== stationDevice.gate.trim().toLowerCase()");
 
     // 5. Must enforce exact pass is in inside/exited status and entry_scanned_at is present
     expect(evidenceSource).toContain("!exactPass.entry_scanned_at");

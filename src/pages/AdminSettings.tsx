@@ -1679,7 +1679,7 @@ export function AdminSettings() {
                   <span>Cloudflare Turnstile Bot Defense</span>
                 </div>
                 <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed">
-                  Bot verification fails closed (HTTP 503) when site or server verifier configuration is incomplete instead of silently bypassing verification. Site key: {settings.securityInfo.turnstileSiteKeyConfigured ? 'Configured' : 'Missing'} · Server verifier: {settings.securityInfo.turnstileVerifierConfigured ? 'Configured' : 'Missing'}.
+                  Bot verification fails closed (HTTP 503) when widget site key or Supabase Auth Attack Protection is incomplete instead of silently bypassing verification. Site key: {settings.securityInfo.turnstileSiteKeyConfigured ? 'Configured' : 'Missing'} · Server verifier: {settings.securityInfo.turnstileVerifierConfigured ? 'Managed via Supabase Auth' : 'Pending Site Key'}.
                 </p>
                 {settings.securityInfo.turnstileFullyVerified ? (
                   <div className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">

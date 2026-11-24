@@ -1863,7 +1863,7 @@ function VisitorReportsView({ onSelectPass, userRole }: VisitorReportsViewProps)
       params.set('pageSize', '50');
       if (reportDateFrom) params.set('dateFrom', reportDateFrom);
       if (reportDateTo) params.set('dateTo', reportDateTo);
-      if (['campus_exit', 'office_visit', 'completed', 'requiring_review', 'missing_timeout', 'currently_inside', 'approved_no_arrival'].includes(reportCategory)) {
+      if (['campus_exit', 'office_visit', 'completed', 'requiring_review', 'missing_timeout', 'currently_inside', 'exited_unconfirmed', 'specific_unconfirmed', 'approved_no_arrival'].includes(reportCategory)) {
         params.set('category', reportCategory);
       }
       if (officeFilter && officeFilter !== 'all') {
@@ -1899,16 +1899,23 @@ function VisitorReportsView({ onSelectPass, userRole }: VisitorReportsViewProps)
       } else if (reportCategory === 'currently_inside') {
         filtered = items.filter((p) => p.status === 'inside' || (p.timeIn != null && p.timeOut == null));
       } else if (reportCategory === 'exited_unconfirmed') {
-        filtered = items.filter((p) => p.timeOut != null && p.attendanceStatus !== 'confirmed');
+        filtered = items.filter(
+          (p) =>
+            Boolean(p.destinationOffice && p.destinationOffice.trim() !== '' && p.destinationOffice.toLowerCase() !== 'general campus') &&
+            (p.timeOut != null || p.status === 'exited') &&
+            p.attendanceStatus !== 'confirmed' &&
+            p.attendanceStatus !== 'completed'
+        );
       } else if (reportCategory === 'specific_unconfirmed') {
         filtered = items.filter(
           (p) =>
-            (p.visitType === 'specific_person' || p.approvalStatus === 'approved') &&
-            p.timeIn != null &&
-            p.attendanceStatus !== 'confirmed'
+            p.visitType === 'specific_person' &&
+            (p.timeIn != null || p.status === 'inside' || p.status === 'exited') &&
+            p.attendanceStatus !== 'confirmed' &&
+            p.attendanceStatus !== 'completed'
         );
       } else if (reportCategory === 'approved_no_arrival') {
-        filtered = items.filter((p) => (p.status === 'issued' || p.approvalStatus === 'approved') && p.timeIn == null);
+        filtered = items.filter((p) => (p.status === 'issued' || p.approvalStatus === 'approved') && p.timeIn == null && !p.scannedAt);
       }
 
       setReportPasses(filtered);
@@ -1939,7 +1946,7 @@ function VisitorReportsView({ onSelectPass, userRole }: VisitorReportsViewProps)
       params.set('cursor', nextCursor);
       if (reportDateFrom) params.set('dateFrom', reportDateFrom);
       if (reportDateTo) params.set('dateTo', reportDateTo);
-      if (['campus_exit', 'office_visit', 'completed', 'requiring_review', 'missing_timeout', 'currently_inside', 'approved_no_arrival'].includes(reportCategory)) {
+      if (['campus_exit', 'office_visit', 'completed', 'requiring_review', 'missing_timeout', 'currently_inside', 'exited_unconfirmed', 'specific_unconfirmed', 'approved_no_arrival'].includes(reportCategory)) {
         params.set('category', reportCategory);
       }
       if (officeFilter && officeFilter !== 'all') {
@@ -1967,16 +1974,23 @@ function VisitorReportsView({ onSelectPass, userRole }: VisitorReportsViewProps)
       } else if (reportCategory === 'currently_inside') {
         filtered = newItems.filter((p) => p.status === 'inside' || (p.timeIn != null && p.timeOut == null));
       } else if (reportCategory === 'exited_unconfirmed') {
-        filtered = newItems.filter((p) => p.timeOut != null && p.attendanceStatus !== 'confirmed');
+        filtered = newItems.filter(
+          (p) =>
+            Boolean(p.destinationOffice && p.destinationOffice.trim() !== '' && p.destinationOffice.toLowerCase() !== 'general campus') &&
+            (p.timeOut != null || p.status === 'exited') &&
+            p.attendanceStatus !== 'confirmed' &&
+            p.attendanceStatus !== 'completed'
+        );
       } else if (reportCategory === 'specific_unconfirmed') {
         filtered = newItems.filter(
           (p) =>
-            (p.visitType === 'specific_person' || p.approvalStatus === 'approved') &&
-            p.timeIn != null &&
-            p.attendanceStatus !== 'confirmed'
+            p.visitType === 'specific_person' &&
+            (p.timeIn != null || p.status === 'inside' || p.status === 'exited') &&
+            p.attendanceStatus !== 'confirmed' &&
+            p.attendanceStatus !== 'completed'
         );
       } else if (reportCategory === 'approved_no_arrival') {
-        filtered = newItems.filter((p) => (p.status === 'issued' || p.approvalStatus === 'approved') && p.timeIn == null);
+        filtered = newItems.filter((p) => (p.status === 'issued' || p.approvalStatus === 'approved') && p.timeIn == null && !p.scannedAt);
       }
 
       setReportPasses((prev) => [...prev, ...filtered]);
@@ -2091,7 +2105,7 @@ function VisitorReportsView({ onSelectPass, userRole }: VisitorReportsViewProps)
           if (cursor) params.set('cursor', cursor);
           if (reportDateFrom) params.set('dateFrom', reportDateFrom);
           if (reportDateTo) params.set('dateTo', reportDateTo);
-          if (['campus_exit', 'office_visit', 'completed', 'requiring_review', 'missing_timeout', 'currently_inside', 'approved_no_arrival'].includes(reportCategory)) {
+          if (['campus_exit', 'office_visit', 'completed', 'requiring_review', 'missing_timeout', 'currently_inside', 'exited_unconfirmed', 'specific_unconfirmed', 'approved_no_arrival'].includes(reportCategory)) {
             params.set('category', reportCategory);
           }
           if (officeFilter && officeFilter !== 'all') {
@@ -2118,16 +2132,23 @@ function VisitorReportsView({ onSelectPass, userRole }: VisitorReportsViewProps)
           } else if (reportCategory === 'currently_inside') {
             items = items.filter((p) => p.status === 'inside' || (p.timeIn != null && p.timeOut == null));
           } else if (reportCategory === 'exited_unconfirmed') {
-            items = items.filter((p) => p.timeOut != null && p.attendanceStatus !== 'confirmed');
+            items = items.filter(
+              (p) =>
+                Boolean(p.destinationOffice && p.destinationOffice.trim() !== '' && p.destinationOffice.toLowerCase() !== 'general campus') &&
+                (p.timeOut != null || p.status === 'exited') &&
+                p.attendanceStatus !== 'confirmed' &&
+                p.attendanceStatus !== 'completed'
+            );
           } else if (reportCategory === 'specific_unconfirmed') {
             items = items.filter(
               (p) =>
-                (p.visitType === 'specific_person' || p.approvalStatus === 'approved') &&
-                p.timeIn != null &&
-                p.attendanceStatus !== 'confirmed'
+                p.visitType === 'specific_person' &&
+                (p.timeIn != null || p.status === 'inside' || p.status === 'exited') &&
+                p.attendanceStatus !== 'confirmed' &&
+                p.attendanceStatus !== 'completed'
             );
           } else if (reportCategory === 'approved_no_arrival') {
-            items = items.filter((p) => (p.status === 'issued' || p.approvalStatus === 'approved') && p.timeIn == null);
+            items = items.filter((p) => (p.status === 'issued' || p.approvalStatus === 'approved') && p.timeIn == null && !p.scannedAt);
           }
 
           return {
