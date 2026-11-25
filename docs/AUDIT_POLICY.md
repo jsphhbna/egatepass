@@ -45,7 +45,7 @@ Every entry in the `audit_events` table adheres to the following strict schema:
 | `id` | `BIGINT` | Unique event sequence identifier | `1042` |
 | `actor_id` | `UUID` | Supabase Auth UID or Device ID | `e1f2a3b4-5678-90ab-cdef-1234567890ab` |
 | `actor_kind` | `TEXT` | Identity category: `staff`, `device`, or `system` | `staff` |
-| `actor_role` | `TEXT` | Resolved DB role: `guard`, `admin`, `superadmin` | `admin` |
+| `actor_role` | `TEXT` | Resolved DB role: `admin`, `superadmin`, `office_staff`, `system`, `bootstrap` (legacy `guard` disabled) | `admin` |
 | `action` | `TEXT` | Standardized canonical event identifier | `superadmin_created` |
 | `target_type` | `TEXT` | Entity affected: `staff`, `device`, `pass`, `settings` | `staff` |
 | `target_id` | `TEXT` | Identifier of affected entity | `u_89ab...` |
@@ -105,7 +105,7 @@ The current application runtime emits these standardized governance identifiers:
 4. `device.create`: Gate scanner or kiosk registration via `api.create_device_profile`
 5. `device.update`: Device configuration update via `api.update_device_profile`
 6. `device.retire`: Device retirement via `api.retire_device`
-7. `device.password_update`: Device credential rotation via `/api/device/update-auth`
+7. `device.password_update`: Device credential rotation via `/api/update-device-auth`
 8. `settings_updated`: System settings and retention window changes via `POST /api/update-settings`
 9. `maintenance.retention_run`: Execution outcome of automated/manual retention sweeps via `/api/admin/retention-maintenance`
 10. `security_hold_created`: Creation of an investigation hold via `POST /api/admin/holds`

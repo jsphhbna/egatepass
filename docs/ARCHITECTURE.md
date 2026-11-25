@@ -57,7 +57,7 @@ flowchart TD
 
 ## 2. Authoritative Relational Data Model
 
-The PostgreSQL database enforces relational integrity, unique constraints, and foreign-key cascading rules across 15 canonical application tables:
+The PostgreSQL database enforces relational integrity, unique constraints, and foreign-key cascading rules across the canonical application tables (including `visitors`, `passes`, `visit_events`, `staff_profiles`, `devices`, `offices`, `office_visits`, `audit_events`, `visitor_accountability_resolutions`, and supporting operational tables):
 
 ```mermaid
 erDiagram
@@ -196,15 +196,17 @@ The platform's core route contract matrix is declared in `server/route-map.ts` (
 
 ### 3.1 Admin Router (10 matrix routes + `/api/admin/offices`: `/api/admin/*`)
 - `GET /api/admin/activity`: Historical audit event query for administrators.
+- `GET, POST /api/admin/calendar`: Administrative campus calendar closure management (`POST /api/system/calendar` also serves calendar endpoints).
 - `GET /api/admin/dashboard`: Unified `Asia/Manila` (`+08:00`) period-filtered operational analytics (`today`, `date`, `month`, `year`, `range`), `OFFLINE MODE RECORDED` isolated counts, and server report rows.
 - `GET /api/admin/devices`: Hardware scanner fleet inventory and status list.
 - `GET /api/admin/emergency`: Real-time campus population roll-call for safety evacuations.
 - `GET, POST /api/admin/emergency-records`: Synchronized offline emergency gate record listing and Admin/Superadmin manual reconciliation (`accepted`, `needs_review`, `duplicate`, `rejected`).
 - `GET, POST, DELETE, PATCH /api/admin/holds`: Incident hold management on visitor records.
-- `GET, POST /api/admin/offices`: Campus office directory CRUD, publication lifecycle (`draft`, `published`, `archived`), `requires_approval_before_pass` policy updates, unused-draft deletion, and staff provisioning/assignments.
-- `GET, PATCH /api/admin/records`: Paginated visitor pass log (`mode=online|offline`, date range, gate filter) and hold/record state actions.
+- `GET, POST /api/admin/offices`: Campus office directory CRUD, publication lifecycle (`draft`, `published`, `archived`), `requires_approval_before_pass` policy updates, permanent office deletion (`api.delete_office`), and staff provisioning/assignments.
+- `GET, PATCH /api/admin/records`: Paginated visitor pass log (`mode=online|offline`, date range, gate filter), End-of-Day accountability summaries/resolutions (`api.get_accountability_summary`, `api.resolve_visitor_accountability`), and hold/record state actions.
 - `GET, POST /api/admin/retention-maintenance`: Manual or cron-authenticated retention engine (halted cleanly when `global_retention_freeze` is active).
-- `GET /api/admin/settings`: Institutional configuration (working hours, retention days, `global_retention_freeze`, emergency exception policy, diagnostics).
+- `GET, POST /api/admin/settings`: Institutional configuration (working hours, retention days, `global_retention_freeze`, emergency exception policy, diagnostics, and Super Admin `return_to_zero` reset / reconciliation).
+- `GET, POST /api/admin/sms`: SMS Gateway recipient queries (`emergency` / `overdue`), daily quota checks, activity logs, and emergency/overdue/test SMS dispatch (`docs/SMS_INTEGRATION.md`).
 - `GET /api/admin/users`: Staff member list and profile state management.
 
 ### 3.2 Auth Router (6 routes: `/api/auth/*`)
@@ -274,20 +276,24 @@ sequenceDiagram
     DB-->>API: { passId, tokenDigest }
     API-->>Browser: { qrToken, passId } (Display QR to visitor)
 
-    Note over Browser,Storage: 3. Gate Scanning & Decision Phase
+    Note over Browser,Storage: 3. Gate Scanning & Monitoring Phase
     Browser->>API: POST /api/scan-pass (Entry gate scanner reads QR)
     API->>DB: RPC api.scan_pass (match token_digest & gate)
-    DB-->>API: Status: Pending Guard Review
-    API-->>Browser: Hold visitor at barrier
-
-    Browser->>DB: RPC api.guard_dashboard_page (snapshot-bound keyset queue pages)
-    DB-->>Browser: Queue items with evidence IDs
-    Browser->>API: GET /api/evidence?id={evidence_id}
-    API->>Storage: Stream private photo object
-    API-->>Browser: Stream photo evidence
-    Browser->>API: POST /api/decide-visit { passId, decision: 'approved' }
-    API->>DB: RPC api.decide_visit (atomic transition status -> inside)
-    DB-->>Browser: Approved confirmed
+    alt Portal Pass (issued -> inside)
+        DB-->>API: Status: Inside Campus
+        API-->>Browser: Grant Entry & Display on Guard Station (/guard via GET /api/guard-station-feed)
+    else Kiosk Walk-In Pass (issued -> pending)
+        DB-->>API: Status: Pending Admin Review
+        API-->>Browser: Queue for Admin Review (/admin/legacy-guard)
+        Browser->>DB: RPC api.guard_dashboard_page (snapshot-bound keyset queue pages)
+        DB-->>Browser: Queue items with evidence IDs
+        Browser->>API: GET /api/evidence?id={evidence_id}
+        API->>Storage: Stream private photo object
+        API-->>Browser: Stream photo evidence
+        Browser->>API: POST /api/decide-visit { passId, decision: 'approved' }
+        API->>DB: RPC api.decide_visit (atomic transition status -> inside)
+        DB-->>Browser: Approved confirmed
+    end
 ```
 
 ---
@@ -300,7 +306,7 @@ Private storage assets are partitioned into two designated buckets:
 
 ### Storage Invariants:
 - **Zero Public Access**: Buckets are marked private; public URL access is permanently disabled.
-- **Access Delegation**: Staff access assets solely via `/api/evidence?id=<uuid>`, which evaluates caller roles (`guard`, `admin`, `superadmin`), pass states, and active incident holds before streaming the image.
+- **Access Delegation**: Staff and authorized stations access assets solely via `/api/evidence?id=<uuid>`, which evaluates caller authority (`admin`, `superadmin`, or gate-matched `guard_station` device for `portal` `inside`/`exited` `photo`/`vehicle_photo` evidence; human `guard` accounts disabled), pass states, and active incident holds before streaming the image.
 - **Ephemeral Upload Intents**: Upload intents expire within 15 minutes. Abandoned uploads are cleaned up during daily retention maintenance.
 - **Retention & Purge**: Expired assets are deleted from storage, and `visitor_evidence.purged_at` is stamped in PostgreSQL.
 
@@ -382,7 +388,7 @@ Pass Presentation Data Flow
         │
         ├──> Online Pass View (InstitutionalPassCard.tsx)
         ├──> Pass Card PNG Download (renderPassCardToDataUrl)
-        ├──> Transactional Pass Email (PassNotificationEmail.tsx)
+        ├──> Transactional Pass Email (PassIssuedEmail.tsx)
         ├──> Kiosk Display (KioskPage.tsx)
         └──> MXW01 Thermal Print (thermalRenderer.ts)
 ```
@@ -502,11 +508,11 @@ Outage Architecture & Authority Delegation
 - **Authoritative Search RPC (`api.guard_search_pending_queue`)**: Queries >= 2 characters trigger a 280ms debounced server search matching visitor name, contact number, purpose, and public reference with generation fencing. Results deduplicate seamlessly with loaded cards.
 - **Clear Search**: Clears search filters instantly restoring the live queue without reloading all passes.
 
-### D. Safe Staff Permanent Decommissioning (`server/routes/system/decommission-user.ts`, Migration 34)
-- **Zero Row Deletion**: Preserves `ON DELETE RESTRICT` foreign keys and historical audit attribution on `public.staff_profiles`.
-- **Pre-Conditions**: Target must be inactive (`active = false`), cannot be the acting actor (`cannot_decommission_self`), and cannot be an already decommissioned account.
+### D. Safe Staff Permanent Decommissioning & Permanent Deletion (`decommission-user.ts`, `delete-user.ts`)
+- **Two-Stage Lifecycle (`ON DELETE CASCADE`)**: Decommissioning (`POST /api/decommission-user`) disables login via `active = false`, sets `decommissioned_at`, and bans the Auth user (`876000h`). When permanent removal is required to reuse email addresses or purge obsolete records, Super Admins invoke `POST/DELETE /api/delete-user` (`api.delete_staff_account` + `auth.admin.deleteUser`; Migration `20261123000800` enables `ON DELETE CASCADE` while preserving anonymized `audit_events` history via `SET NULL` and blocking removal if active incident holds exist).
+- **Pre-Conditions**: Target must be inactive (`active = false`), cannot be the acting actor (`cannot_decommission_self`), and cannot be an already decommissioned account when running `decommission-user`.
 - **Super Admin Reauthentication**: Requires the acting Super Admin's password, verified via an isolated Supabase Auth client using local-only signout (`signOut({ scope: 'local' })`) to preserve the browser session.
-- **Auth Suspension & Reconciliation**: Enforces permanent Auth ban (`876000h`). External Auth failures trigger reconciliation tasks rather than rolling back database state.
+- **Auth Suspension & Reconciliation**: Decommissioning enforces an 876,000-hour Auth ban; external Auth failures trigger reconciliation tasks rather than rolling back database state.
 
 ### E. Unified Report Exports (`src/lib/reportExport.ts`)
 - **Dynamic Module Loading**: `exceljs`, `jspdf`, and `jspdf-autotable` are loaded on-demand only when an export is triggered, keeping initial bundle size minimal.
@@ -545,7 +551,7 @@ Outage Architecture & Authority Delegation
 - **Exact-Pinned Model Runtime**: `onnxruntime-node: 1.31.1` is exact-pinned, with model provenance, licenses (Apache-2.0), and SHA-256 hashes documented in `server/models/README.md`.
 
 
-### G. Portal Actor Continuity, Guard Station Device Model & Layout-Aware OCR (Migrations 40–42)
+### H. Portal Actor Continuity, Guard Station Device Model & Layout-Aware OCR (Migrations 40–42)
 - **Portal Actor Continuity & Client Separation**: The online visitor pre-registration portal uses a dedicated Supabase client via `requirePortalSupabase()` with storage key `egatepass-portal-auth`. This guarantees complete isolation from operator/staff credentials in `egatepass-operator-auth`. All portal transactions validate that `user.is_anonymous === true` and `user.id === transaction.actorId`. All evidence upload intents, preflight face checks, and biometric identity verification calls strictly carry the visitor bearer token.
 - **Guard Station Device Model**: Automated campus gate entry monitoring is delegated to dedicated hardware devices (`device_type = 'guard_station'`) bound to specific gate locations. Human guard accounts (`role = 'guard'`) have been decommissioned from normal gate operations. Attempts to log into legacy guard accounts are intercepted upon authentication, signed out immediately, and presented with a notice directing gate personnel to the Guard Station device.
 - **Legacy Admin Walk-in Compatibility**: To preserve operational continuity during emergency walk-in processing, campus administrators and superadmins retain the authority to execute `guard_offline` registration and issuance RPCs (`api.create_upload_intent` with source `guard_offline`, `api.guard_sync_offline_registration`). Legacy guard roles attempting offline creation are rejected with SQLSTATE 42501 `administrator required`.
@@ -553,23 +559,10 @@ Outage Architecture & Authority Delegation
 
 ---
 
-## 12. Cross-Layer Modernization, Residential Map UX, OCR & Production Readiness (V10 Alpha 3)
+## 13. Cross-Layer Modernization, PSGC Addressing, OCR & Returning Visitor Verification
 
-### 12.1 OpenStreetMap Tile Usage Policy Compliance & Nominatim Search Proxy Architecture
-- **Direct Browser Tile Loading & Client Caching**: Map tiles load directly from `https://tile.openstreetmap.org/{z}/{x}/{y}.png` via standard Leaflet caching. No backend proxying or storage of tile images is performed.
-- **Strict Nominatim Compliance & Rate Limiting**: The server-side search proxy (`server/routes/location/search.ts` via `/api/passes/location-search`) strictly complies with the Nominatim Acceptable Use Policy:
-  - **Global 1 req/sec Throttle**: Serializes all outgoing queries across application runtime with `throttleNominatim()`, enforcing a >= 1050ms interval between requests.
-  - **In-Memory Query Caching**: Case-insensitive in-memory cache with 1-hour TTL (`CACHE_TTL_MS = 3600000`) prevents repeated lookups.
-  - **Philippine Geographic Scope**: Queries enforce `countrycodes=ph` and `addressdetails=0`, limiting results to 5 matches.
-  - **Mandatory User-Agent & Contact Header**: Requests send `User-Agent: EARIST-EGatePass/1.0 (https://egatepass.tech; contact: notifications@egatepass.tech)`.
-  - **Graceful Client Fallback**: If Nominatim returns HTTP 429 or network errors occur, the UI clearly displays a friendly non-blocking notice prompting the visitor to tap directly on the map.
-
-### 12.2 Approximate Residential Location UX Contract
-- **Zero Default Pin / Coordinate Assignment**: New visitors begin with `draftLocation = null`. The map initially centers on Manila without placing an initial pin.
-- **Disabled Confirm Action**: The in-modal primary action button is disabled while `draftLocation` is null and labeled `'Select approximate location'`. Once a pin is dropped or chosen, it activates as `'Confirm Location'`.
-- **Three-Decimal Normalization (~100m Precision)**: Both client (`src/lib/homeLocation.ts`) and server (`server/lib/home-location.ts`) enforce 3-decimal coordinate rounding. Exact street addresses, house numbers, and barangay text are never requested or stored.
-- **Explicit Geolocation**: The "Use My Location" GPS button requires explicit user click, indicates loading status, and handles permission rejections non-destructively.
-- **Returning Visitor Restoration**: Returning visitor coordinate profiles are restored from the database and displayed with an existing marker.
+### 13.1 Legacy Map Picker Retirement & Approximate Coordinate Normalization
+- Leaflet interactive map tiles, the legacy interactive map picker component, and browser GPS prompts were **retired** in favor of PSA PSGC cascading selection (Section 13.11) and removed from frontend bundles. Client/server coordinate utilities are consolidated in `src/lib/homeLocation.ts` (re-exported by `server/lib/home-location.ts`), while `server/routes/location/search.ts` (`/api/location/search`) remains mounted as a rate-limited server endpoint.
 
 ### 12.3 PaddleOCR.js Modern Client-Side OCR Engine Architecture
 - **Engine Modernization**: Upgraded from Tesseract-only OCR to PaddleOCR.js (`@paddleocr/paddleocr-js`) utilizing PP-OCRv6 Small models for browser-native detection and recognition.
@@ -596,38 +589,31 @@ Outage Architecture & Authority Delegation
 ### 12.6 Biometric Quality Evaluation Fail-Closed Contract
 - **Fail-Closed Enforcement**: `evaluateFaceCropQuality()` in `server/lib/face-engine.ts` enforces strict fail-closed validation. Empty face landmarks, bounding boxes under 30px, corrupted buffers, or caught exceptions return `{ passed: false, code: 'decode_failed' }`. Under no circumstances does the engine fail open with `{ passed: true }`.
 
-### 12.7 Independent Capabilities Flags
-- **Decoupled 1:1 and 1:N Flags**:
-  - `facialRecognitionConfigured`: Reports `true` when 1:1 OpenCV Zoo YuNet and SFace ONNX models are present on server storage and loadable.
-  - `returningVisitorAvailable`: Reports `true` only when `facialRecognitionConfigured` is true AND all 1:N environment calibration variables (`RETURNING_FACE_MIN_COSINE`, `RETURNING_FACE_MIN_MARGIN`, `RETURNING_VISITOR_TEMPLATE_KEY`, `RETURNING_MATCH_TOKEN_SECRET`) are validly configured.
+### 13.7 Current Ephemeral Biometric Capabilities Flags
+- **Ephemeral Model Readiness (`/api/passes/capabilities`)**:
+  - `facialRecognitionConfigured`: Reports `true` when OpenCV Zoo YuNet and SFace ONNX models are present on server storage and loadable.
+  - `returningEnrollmentAvailable`: Reports `false` and `biometricStorageRetired` reports `true` because persistent `returning_face_templates` biometric vector storage was retired in Migration 103.
+  - `returningVisitorAvailable`: Reports `true` when 1:1 transient SFace matching (`RETURNING_MATCH_TOKEN_SECRET` + threshold configuration) is ready to compare a live returning selfie in RAM against historical portrait uploads.
 
-### 12.8 Active Biometric Template Key Versioning
-- **Versioned Keyring**: `encryptFaceTemplate` dynamically resolves the active encryption version using `getActiveTemplateKeyVersion()`, defaulting to `v1` and supporting seamless rotation via `RETURNING_VISITOR_ACTIVE_KEY_VERSION`.
-- **Cryptographic Isolation**: Templates encrypted under `v2` keys cannot be decrypted by `v1` keys and fail authentication tag validation if tampered with.
+### 13.8 Biometric Vector Storage Retirement (Migration 103)
+- Persistent encrypted embedding storage (`returning_face_templates`, `api.enroll_returning_visitor_v1`, `RETURNING_VISITOR_TEMPLATE_KEY`) was retired cleanly; returning visitor verification never writes biometric vectors or new returning selfies to disk/Storage.
 
-### 12.9 ONNX Runtime Node Native Binary & Allowlist Configuration
-- **Package Manager Allowlist**: Configured `allowScripts` in `package.json` (`"allowScripts": { "onnxruntime-node@1.31.1": true }`) and `"pnpm": { "onlyBuiltDependencies": ["onnxruntime-node", "sharp"] }` to ensure native binding builds without warnings.
-- **Vercel Serverless Function Bundling**: Configured `vercel.json` with `includeFiles: ["server/models/**", "node_modules/onnxruntime-node/bin/**"]` to include precompiled ONNX Runtime Node binaries in Vercel function deployments.
+### 13.9 ONNX Runtime Node Native Binary & Vercel Function Bundling
+- **Package Manager Allowlist**: Configured `allowScripts` in `package.json` (`"allowScripts": { "onnxruntime-node@1.31.1": true }`) and `"pnpm": { "onlyBuiltDependencies": ["onnxruntime-node", "sharp"] }`.
+- **Vercel Serverless Function Bundling**: `vercel.json` scopes asset bundling to `"api/passes/[...route].ts"` with `"includeFiles": "{public/earist-logo.png,public/fonts/**,server/models/**,node_modules/onnxruntime-node/bin/napi-v6/linux/x64/**}"`.
 
 ### 12.10 Supabase Security Advisor Audit & Classification
 - **Advisor 0003 (Performance - Auth UID in RLS Subquery)**: Resolved in Migration 48 for `visit_vehicle_declarations_staff_select` by wrapping `(select auth.uid())` in subquery to eliminate per-row re-evaluation.
 - **Leaked Secret Remediation**: Removed obsolete `GEOAPIFY_API_KEY` from Vercel Production environment secrets. No third-party geocoding API keys exist in production.
 
-### 12.11 Official PSA PSGC & PHLPost Reference System (Migration 50)
+### 13.11 Official PSA PSGC Structured Address System (Updated Migration 103)
 - **Database Tables**:
-  - `public.psgc_reference_versions`: Provenance metadata and active snapshot tracking (`psgc-2026-q3`, effective 2026-09-30, release 2026-10-12).
-  - `public.psgc_locations`: Self-referencing 10-digit PSGC hierarchy (`region`, `province`, `city`, `municipality`, `sub_municipality`, `barangay`). Level and parentage constraints enforced.
-  - `public.postal_code_reference`: PHLPost mapping table (`exact_barangay`, `unique_city`, `multi_code_city`, `unmapped`, `ambiguous`).
-- **RLS & Security Invariants**:
-  - Public, anon, and authenticated read-only access limited strictly to `is_active = true` records.
-  - Insert, update, and delete granted strictly to `service_role`.
+  - `public.psgc_reference_versions`: Provenance metadata and active snapshot tracking (`psgc-2026-q3`).
+  - `public.psgc_locations`: Self-referencing 10-digit PSGC hierarchy (`region`, `province`, `city`, `municipality`, `sub_municipality`, `barangay`) with 42,010 active official barangays.
+  - `public.postal_code_reference`: Retired in Migration 103 (`20261114000200`; all rows deactivated with `is_active = false`).
 - **Pass Issuance v6 Contract (`api.issue_online_pass_v6`)**:
-  - Validates PSGC hierarchy integrity directly against `psgc_locations` (verifying region, province existence or NCR province-less validation, city, and barangay parentage).
-  - Stores immutable address snapshots (`psgc_region_name`, `psgc_province_name`, `psgc_city_municipality_name`, `psgc_barangay_name`, `home_building`, `home_street`, `postal_code`, `postal_code_source`) on `public.visitors` and `public.returning_visitor_profiles`.
-  - Service-role only execution (`revoke all from public, anon, authenticated`).
-- **Complete Map & Geolocation Retirement**:
-  - Online visitor registration completely retires Leaflet map rendering, Nominatim lookups, and GPS browser permission prompts.
-  - Zero external geographic API keys required (no Geoapify key, no PSGC API token, no Google Maps billing).
+  - Validates PSGC hierarchy integrity directly against `psgc_locations`, stores immutable PSGC locality snapshots (`psgc_region_name`, `psgc_province_name`, `psgc_city_municipality_name`, `psgc_barangay_name`, `home_building`, `home_street`), and sets `requested_postal_code: null` / `requested_postal_code_source: null`.
+- **Complete Map & Geolocation Retirement**: Online registration uses the PSGC cascading selector cleanly without Leaflet map rendering or GPS prompts.
 
 ### 12.12 Nationwide PSGC Reference Ingestion & Address Enforcement
 - **Nationwide PSA PSGC Ingestion**:
@@ -645,13 +631,10 @@ Outage Architecture & Authority Delegation
   - Rate-limited with dual token buckets (10 lookups per 5 minutes per actor session, 30 per 5 minutes per network identifier).
   - Queries `returning_visitor_profiles` using indexed functional matching (`lower(first_name)`, `lower(last_name)`).
   - Returns masked disambiguation records (`maskedName`: e.g. "Juan D. C***", `maskedContact`: e.g. "0917***1234", `partialLocality`: e.g. "Barangay 408, City of Manila"). Prevents plaintext PII enumeration.
-- **Controlled 1:1 Biometric Verification**:
+- **Controlled Ephemeral 1:1 Biometric Verification**:
   - Fresh selfie capture using live camera. NO government ID re-upload is required for returning visitors.
-  - `POST /api/passes/identify-returning`: Accepts `requestId`, `profileId`, and `photoIntentId`.
-  - Fetches the target profile's encrypted face template from `returning_face_templates` and decrypts using AES-256-GCM.
-  - Evaluates 1:1 cosine similarity against fresh selfie descriptor using calibrated threshold `RETURNING_FACE_MIN_COSINE` (0.45).
-  - Obsolete 1:N gallery matching and 1st-to-2nd candidate margin checks (`RETURNING_FACE_MIN_MARGIN`) are fully retired.
-  - Generates single-use, cryptographically signed `matchToken` bound to `actorId`, `requestId`, `profileId`, and `photoIntentId`.
+  - `POST /api/passes/identify-returning`: Accepts `requestId`, `profileId`, and transient live selfie buffer via multipart payload (never stored to Storage or `returning_face_templates`), comparing against the candidate's original registration portrait at SFace threshold `RETURNING_FACE_MIN_COSINE` (provisional baseline `0.363`).
+  - Generates single-use, cryptographically signed `matchToken` bound to `actorId`, `requestId`, `profileId`, and transient attempt digest.
 - **Profile Confirmation & Vehicle Convenience**:
   - Multi-step returning visitor flow: `returning_lookup` -> `returning_capture` -> `returning_confirm`.
   - Profile confirmation view displays verified name badge, editable contact number and PSGC structured address, and mandatory fresh purpose and visit date.
@@ -661,13 +644,11 @@ Outage Architecture & Authority Delegation
   - Functional lookup indexes on `returning_visitor_profiles (lower(first_name), lower(last_name))` and `(contact_number_e164)`.
   - Default-deny RLS enabled on `nominatim_rate_limiter` and `location_search_cache` (`revoke all from public, anon, authenticated; grant all to service_role`).
 
-### 12.15 Provisional SFace Verification Architecture & Enrollment Decoupling
-- **Capability Decoupling (Enrollment vs Verification)**:
-  - Eliminated the circular dependency between returning visitor verification availability and first-time visitor enrollment:
-    - **Face Extraction Readiness**: Native ONNX runtime readiness, YuNet 2023mar detection model, and SFace 2021dec model present on disk with valid smoke inference (`facialRecognitionConfigured`).
-    - **Returning Enrollment Readiness**: Face extraction is ready and 32-byte AES-256-GCM template encryption key is configured (`returningEnrollmentAvailable`). Does NOT depend on verification thresholds or match token secrets.
-    - **Returning Verification Readiness**: Face extraction is ready, both template key and match token secret are valid, and similarity threshold is configured (`returningVisitorAvailable`).
-  - New Visitor registration now displays the optional biometric enrollment checkbox (`rememberVisitor`) whenever `returningEnrollmentAvailable` is true, enabling the first legitimate enrollment without requiring verification to already be active.
+### 13.15 Provisional SFace Verification Architecture (Ephemeral Mode)
+- **Capability Separation**:
+  - `facialRecognitionConfigured`: Native ONNX runtime readiness with YuNet + SFace models verified on disk.
+  - `returningEnrollmentAvailable`: `false` (`biometricStorageRetired: true` after persistent template storage retirement in Migration 103).
+  - `returningVisitorAvailable`: `true` when transient 1:1 portrait verification and `RETURNING_MATCH_TOKEN_SECRET` are ready.
 - **Provisional SFace Reference Threshold Model**:
   - Threshold: `0.363` (`RETURNING_FACE_MIN_COSINE=0.363`, `RETURNING_FACE_THRESHOLD_MODE=provisional`).
   - **Compatibility Proof**: Matches the official OpenCV Zoo SFace 2021dec reference specification:
@@ -699,13 +680,10 @@ Outage Architecture & Authority Delegation
   - The resulting authenticated anonymous session (`PortalIssueTransaction`) is stored in `portalTransactionRef` and securely reused for `lookupReturningVisitor()` and `identifyReturningVisitor()` without redundant challenges.
   - If an anonymous session expires, `validatePortalSession(tx)` detects the invalidity and automatically triggers a fresh challenge before re-authenticating.
 
-### 12.17 Mobile UX Hardening, Remember Me Enrollment Architecture & Returning 1:1 Freeze/Review Workflow
-- **Prominent Institutional Biometric Enrollment Card**:
-  - Replaced the legacy small native checkbox with an institutional enrollment card positioned at the very top of `step === 'review'` (immediately following the Biometric Identity Verified badge).
-  - Styled in EARIST institutional maroon (`#7A0A0A`) with subtle gold/amber accents, min-height ≥ 72px, 28px custom checkbox, 16px title ("Remember me for faster future visits"), 14px description, and gold "Optional" badge.
-  - Entire card acts as a single cohesive tap target with native toggle semantics, preventing double-toggle events.
-  - Preserves explicit consent: default remains unchecked (`rememberVisitor: false`), pass issuance passes `enrollReturning: true` only when explicitly checked, and enrollment unavailable states are communicated clearly without blocking normal pass issuance.
-  - When visitor declares a vehicle (`arrivalMode === 'vehicle'`) and checks Remember Me, an integrated sub-option allows saving the vehicle to the visitor's profile.
+### 13.17 Mobile UX Hardening & Returning 1:1 Freeze/Review Workflow
+- **Automatic Returning Profile Linkage (Zero Biometric Enrollment UI)**:
+  - The legacy "Remember me for faster future visits" card and `rememberVisitor` toggle were removed when biometric vector persistence was retired; eligible portal registrations link to `returning_visitor_profiles` cleanly without persisting face embeddings.
+  - Visitors with declared vehicles (`arrivalMode === 'vehicle'`) can still reuse or add vehicles cleanly via `returning_visitor_vehicles`.
 - **iPhone Mobile-Safe Modal & Keyboard Interaction Architecture**:
   - `Modal.tsx` incorporates dynamic viewport sizing (`max-h-[calc(100dvh-2rem)]`), iOS safe-area spacing (`pt-[max(1rem,env(safe-area-inset-top))]`, `pb-[max(1rem,env(safe-area-inset-bottom))]`), and internal overscroll containment.
   - Autopopup prevention: `onOpenAutoFocus` suppresses input focus events on touch devices (`'ontouchstart' in window || navigator.maxTouchPoints > 0`), ensuring the on-screen software keyboard does not open automatically on modal display, preserving full visibility of modal contents and actions until intentional tap.
@@ -727,23 +705,8 @@ Outage Architecture & Authority Delegation
   - **Stage 6 (Match Rejected)**: On low similarity score or image defect, displays specific, actionable feedback based on the exact rejection reason code (`no_face`, `multiple_faces`, `too_small`, `too_dark`, `overexposed`, `blurry`, `framing_failed`) with a prominent "Retake Selfie" button. The selected profile candidate remains active, allowing immediate retake without searching again, and the user is not forced into New Visitor registration.
   - **Stage 7 (State Cleanup & Decoupled Lifecycle)**: Camera unmount cleanup is isolated to genuine component unmount (`useEffect(() => () => faceWebcam.stop(), [])`) so URL changes during Retake never abort pending WebKit `getUserMedia()` requests. Transient selfie buffers and object URLs are cleared on retake.
 
-### 12.18 Returning Address Hydration, Persistence Hardening & Postal Code Preservation
-- **Deterministic Pure Hydration Helper**:
-  - `hydrateReturningAddress(profile)` in `src/lib/returningAddressHydration.ts` provides pure, testable hydration from a successful 1:1 match profile into four state variables (`selectedPsgc`, `homeBuilding`, `homeStreet`, `postalCode`).
-  - Trims all optional address strings (`houseBuilding`, `street`, `postalCode`, `postalCodeSource`, locality names); whitespace-only strings evaluate to clean empty strings `''`, never visual blank spaces.
-  - Reconstructs `postalResolution` (`isAutoFilled: true`, `mappingType: 'exact_barangay'`, `message: 'PHLPost standard postal code'`) when `postalCode` exists and `postalCodeSource === 'PHLPost'`.
-- **Backend Locality Fallback Resolution**:
-  - `resolvePsgcLocalityFallback(profile, referenceLocs)` in `server/routes/passes/identify-returning.ts` executes whenever `psgc_province_code` exists without `psgc_province_name` or any required locality name is null/whitespace.
-  - Resolves administrative names via exact PSGC codes from `psgc_locations` without fabricating data or mutating database records.
-  - Non-sensitive server-side diagnostic logging on reference lookup errors.
-- **Returning Profile Persistence Hardening**:
-  - In `server/routes/passes/issue.ts` and `api.issue_online_pass_v6`, `saveUpdates` is strictly respected: when `requested_save_profile_updates` is `false`, `returning_visitor_profiles` contact number and structured address are preserved completely. When `true`, the profile is updated with validated contact and PSGC address.
-  - Returns explicit update status in 201 response: `returningProfileUpdate: 'updated' | 'failed' | 'not_requested'`.
-- **Pass Issuance Survival Invariant**:
-  - A failure during returning profile update never fails, aborts, or rolls back an already issued visitor pass.
-  - Surfaces honest, non-blocking notification to the visitor if profile persistence fails without exposing database error details or residential PII.
-- **Postal Code Metadata Preservation**:
-  - In `src/components/AddressCascadingSelector.tsx`, `handleConfirm()` checks `isUnchangedPostal` and preserves `initialAddress.postalCodeSource` and `postalResolution` when the visitor re-opens and confirms the selector without changing the postal code, preventing silent degradation of `PHLPost` to `manual`.
+### 13.18 Returning Address Hydration & Legacy Postal Compatibility
+- `hydrateReturningAddress(profile)` in `src/lib/returningAddressHydration.ts` restores clean PSGC administrative locality (`selectedPsgc`, `homeBuilding`, `homeStreet`) with `postalCode: ''` (never restoring decommissioned postal codes), while replay validation ignores legacy postal fields.
 
 ### 12.19 Returning Visitor Privacy Hardening, Ephemeral Selfie Lifecycle & Calibration Verification Boundaries
 - **Step 1 Turnstile Enforcement on Candidate Lookup**:
@@ -861,7 +824,7 @@ Outage Architecture & Authority Delegation
 - **Retention Freeze Stale Pass Expiry Semantics**:
   - Under `global_retention_freeze`, destructive image/record purge operations are halted, but non-destructive `api.expire_stale_passes` continues running to ensure expired passes transition from `active` to `expired` on schedule.
 
-### 12.24 Optional Staff TOTP MFA & Conditional Assurance Authorization Pipeline (Migration 49)
+### 13.24 Optional Staff TOTP MFA & Conditional Assurance Authorization Pipeline (Migration 109)
 - **Optional Policy & Dual-Assurance Access Model (§R1)**:
   - Multi-Factor Authentication (TOTP) is strictly optional for all human staff roles (`admin`, `superadmin`, `office_staff`).
   - Staff without verified TOTP factors authenticate with password only and access protected staff routes (`/admin`, `/office`) at Authenticator Assurance Level 1 (`aal1`) without encountering enrollment prompts or verification challenges.
@@ -885,3 +848,9 @@ Outage Architecture & Authority Delegation
   - Dedicated serverless routes registered in `api/auth/[...route].ts` and `server/route-map.ts` at `/api/auth/mfa`:
     - `GET /api/auth/mfa?userId=<UUID>`: Returns factor inventory for target staff member.
     - `POST /api/auth/mfa`: Reauthenticates the acting Superadmin's password via an isolated Supabase Auth client (`signOut({ scope: 'local' })`), validates non-empty reason and matching factor ID, deletes target TOTP factors via `admin.mfa.deleteFactor`, writes an immutable audit record to `public.audit_events` with `action: 'staff.mfa_factor_reset'`, and safely revokes target user sessions via `admin.signOut()`.
+
+### 13.25 Accountability, SMS Gateway, Emergency Console & Return-to-Zero Subsystems
+- **Emergency Offline Console (`/emergency-device`)**: Dedicated `emergency_device` hardware route separated from human staff operations.
+- **End-of-Day Visitor Accountability & Reconciliation**: Within `/admin/visitors?tab=reports`, Super Admins query `api.get_accountability_summary` (anchored safely to `Asia/Manila`) and resolve unconfirmed campus exits or office arrivals via `api.resolve_visitor_accountability` (`visitor_accountability_resolutions`).
+- **Cloud Android SMS Gateway (`docs/SMS_INTEGRATION.md`)**: `/api/admin/sms` + Supabase Edge Functions (`send-sms`, `sms-intake`) manage emergency/overdue SMS broadcasts with atomic `sms_daily_quotas` reservations and privacy-safe `sms_logs`.
+- **Return-to-Zero Reset (`return_to_zero`)**: Super Admin reset workflow in `/admin/settings` (`api.return_to_zero_reset`, `storagePurgeService.ts`) with leased worker fencing and verified private Storage purge before operational table reset.

@@ -12,14 +12,14 @@ E-GatePass separates human staff profiles from dedicated scanning devices. All a
 flowchart TD
     SA[Super Admin]
     Admin[Admin]
-    Guard[Guard]
-    Device[Scanner Devices]
+    Office[Office Staff]
+    Device[Scanner / Kiosk / Guard Station / Emergency Devices]
 
-    SA -->|Create / Deactivate / Promote| Admin
-    SA -->|Manage Institutional Settings| Settings[System Settings & Retention]
-    Admin -->|Create / Deactivate| Guard
+    SA -->|Create / Deactivate / Promote / Delete| Admin
+    SA -->|Manage Institutional Settings & SMS| Settings[System Settings & Retention]
+    SA -->|Provision / Assign| Office
     Admin -->|Register / Revoke| Device
-    Guard -->|Operational Review| Passes[Pass Approval / Rejection]
+    Admin -->|Review Legacy Kiosk Passes| Passes[Kiosk Review /admin/legacy-guard]
 ```
 
 ### 1.1 Staff Account Management
@@ -48,10 +48,10 @@ flowchart TD
 - The system enforces a strict invariant across database and API layers: **The last active Super Admin can NEVER be deactivated or demoted**. This is guarded by the database trigger `private.protect_last_superadmin` on `public.staff_profiles`, enforced by `api.update_staff_profile`, and surfaced by `POST /api/update-user` as HTTP 409 `cannot_remove_last_superadmin` (translated in the Staff Management UI as *"Cannot demote or deactivate the last remaining Super Admin."*).
 
 #### Office Staff Account Provisioning & Office Assignments
-- In **Admin Dashboard > Staff Management** (`/admin/users`), administrators select role **Office Staff** (`office_staff`).
+- In **Admin Dashboard > Office Directory** (`/admin/users?tab=directory`), Super Admins provision **`office_staff`** accounts via `/api/admin/offices` (`action: 'provision_account'`), rather than `/api/create-user` (`POST /api/create-user` is strictly scoped to creating `'admin'` accounts by Super Admins).
 - Assign one or more registered offices to the staff user (e.g. *Office of the Registrar*, *College of Engineering*).
 - Office staff complete standard password replacement onboarding upon first sign-in and are automatically redirected to the dedicated Office Portal (`/office`).
-- Office staff accounts are scoped strictly to their assigned offices. To update office assignments, administrators use the Staff Management interface or the `/api/admin/offices` endpoint.
+- Office staff accounts are scoped strictly to their assigned offices. To update office assignments or toggle emergency office closure with optional SMS/email visitor alerts, administrators use `/admin/users` or `/api/admin/offices` / `/api/office/closure`.
 
 #### Office Visit Email Delivery Recovery & Diagnostics
 - If transient network or Resend provider delivery errors occur upon visit approval, the pass payload remains securely encrypted in `public.office_visit_email_outbox` with `delivery_status` reflecting the lifecycle state:
@@ -92,9 +92,9 @@ flowchart LR
 
 #### Device Registration
 1. In **Admin Dashboard > Device Management** (`/admin/devices`), click **Register New Device**.
-2. Specify Device Name, Type (`entry`, `exit`, `kiosk`, `guard_station`), and Gate identifier (e.g. `Main Gate`). Guard Station devices operate as the high-visibility gate display at the guard station.
+2. Specify Device Name, Type (`entry`, `exit`, `kiosk`, `guard_station`, `emergency_device`), and Gate identifier (e.g. `Main Gate`). Guard Station devices operate as the high-visibility gate display at the guard station.
 3. Note the generated device credentials.
-4. On the physical device (e.g. tablet or scanner), log into `/device/login`.
+4. On the physical device (e.g. tablet or scanner), log into `/login` with the device's generated credentials.
 
 #### Device Revocation
 - If a device is lost, stolen, or decommissioned, an Admin clicks **Revoke**.
@@ -130,16 +130,20 @@ sequenceDiagram
     E->>API: POST /api/scan-pass (mode: entry)
     API->>DB: RPC api.scan_pass (match token_digest & gate)
     DB-->>API: Valid issued pass
-    API->>DB: Transition status -> pending
-    API-->>E: Status: Pending Guard Review
-
-    G->>DB: RPC api.guard_dashboard_page (fetch pending queue page)
-    DB-->>G: Visitor details & evidence IDs
-    G->>API: GET /api/evidence?id={evidence_id}
-    API-->>G: Stream photo evidence securely
-    G->>API: POST /api/decide-visit { passId, decision: 'approved' | 'rejected' }
-    API->>DB: RPC api.decide_visit (atomic transition to inside/rejected)
-    DB-->>G: Decision confirmed
+    alt Online Portal Pass
+        API->>DB: Transition issued -> inside (Appears on /guard feed)
+        API-->>E: Access Granted
+    else Kiosk Walk-In Pass
+        API->>DB: Transition issued -> pending
+        API-->>E: Status: Pending Admin Review (/admin/legacy-guard)
+        G->>DB: RPC api.guard_dashboard_page (Admin legacy kiosk queue)
+        DB-->>G: Visitor details & evidence IDs
+        G->>API: GET /api/evidence?id={evidence_id}
+        API-->>G: Stream photo evidence securely
+        G->>API: POST /api/decide-visit { passId, decision: 'approved' | 'rejected' }
+        API->>DB: RPC api.decide_visit (atomic transition to inside/rejected)
+        DB-->>G: Decision confirmed
+    end
 
     Note over V,G: Visitor completes on-campus business
 
@@ -171,7 +175,7 @@ flowchart TD
     ReleaseHold --> CheckHold
 ```
 
-1. Navigate to **Admin Dashboard > Visitor Records** or **Incident Holds** (`/admin/holds`).
+1. Navigate to **Admin Dashboard > Visitor & Records** (`/admin/visitors`) to place or release incident holds.
 2. Find the visitor or pass under investigation and click **Place Incident Hold**.
 3. Enter the official incident case number and reason.
 4. While the hold is active (`active = true`), retention maintenance is suspended for that visitor's records, photos, and ID evidence regardless of age.
@@ -236,7 +240,7 @@ flowchart TD
     Action -->|Manual Fix| Manual["Acknowledge & Mark Resolved"]
 ```
 
-1. Open **Super Admin Dashboard > Reconciliation**.
+1. Open **Admin Dashboard > Audit & Reconciliation** (`/admin/audit`, Reconciliation tab).
 2. Review pending or failed tasks via `GET /api/reconciliation-items` and update task status via `PATCH /api/reconciliation-items`.
 3. Click **Details** to see the service boundary, payload reference, and error trace.
 4. Choose **Retry** to re-dispatch the external call, or **Resolve** once manual corrections are in place.
@@ -376,9 +380,9 @@ The Guard tablet serves as the sole operational access authority during an outag
 
 ### 10.3 Automatic Reconnection Synchronization
 When cloud connectivity returns:
-1. The Guard Console detects connectivity and initiates background synchronization via `guardSyncManager.ts`.
-2. Offline walk-in registrations synchronize first via `api.sync_offline_registration` (uploading evidence photos, creating canonical visitor and pass records).
-3. Queued lifecycle events synchronize via `api.sync_offline_event` (evaluating prior state, locking rows with `FOR UPDATE`, and transitioning pass status).
+1. Upon connectivity restoration, sync dispatches through the authenticated synchronization handlers (`api.guard_sync_offline_registration`, `api.guard_sync_offline_event` for legacy admin sync; `POST /api/gate/emergency-device` for Emergency Devices).
+2. Offline walk-in registrations synchronize via `api.guard_sync_offline_registration` (uploading evidence photos, creating canonical visitor and pass records).
+3. Queued lifecycle events synchronize via `api.guard_sync_offline_event` (evaluating prior state, locking rows with `FOR UPDATE`, and transitioning pass status).
 4. Synchronized entries are acknowledged and safely purged from the local device store.
 5. In the rare event of a state conflict (e.g. visitor was already rejected online prior to outage), a reconciliation record is logged in `public.reconciliation_tasks` for administrative review without overwriting data.
 
@@ -460,9 +464,15 @@ When cloud connectivity returns:
 - **Layout-Aware Structured OCR**: Client-side OCR operates entirely within browser memory using spatial multi-line analysis and fuzzy label matching. Autofill occurs when confidence meets or exceeds 60%, and warnings are presented if extraction confidence is low. Visitors may review and freely adjust all prefilled values before continuing.
 
 ### 11.8 Emergency Device Registration, Offline Sync & Reconciliation
-- **Registration**: Admins or Superadmins register dedicated `emergency_device` accounts in `/admin/devices` bound to a physical gate. Emergency Devices sign in at `/login` and route strictly to `/device/emergency`.
-- **Reconciliation**: Synced records appear isolated under `/admin/records` (**Emergency Offline Records**) permanently classified as `OFFLINE MODE RECORDED`. Admins/Superadmins review physical ID inspection attestations and reconcile items via `POST /api/admin/emergency-records` (`accepted`, `needs_review`, `duplicate`, `rejected`).
+- **Registration**: Admins or Superadmins register dedicated `emergency_device` accounts in `/admin/devices` bound to a physical gate. Emergency Devices sign in at `/login` and route strictly to `/emergency-device`.
+- **Reconciliation**: Synced records appear isolated under `/admin/visitors?tab=offline` (**Emergency Offline Records**) permanently classified as `OFFLINE MODE RECORDED`. Admins/Superadmins review physical ID inspection attestations and reconcile items via `POST /api/admin/emergency-records` (`accepted`, `needs_review`, `duplicate`, `rejected`).
 - **Exception Policy**: Offline emergency exceptions are disabled by default (`allow_emergency_exception = false`) and may only be enabled by Superadmins in **System Settings**.
+
+### 11.9 Permanent Staff & Office Removal, Visitor Accountability & SMS Alerts
+- **Permanent Account Deletion (`POST/DELETE /api/delete-user`)**: Eligible decommissioned staff accounts can be permanently removed by Super Admins (`api.delete_staff_account` + Supabase `auth.admin.deleteUser`, `ON DELETE CASCADE`), preserving anonymized `audit_events` attribution and freeing the email for re-onboarding unless blocked by active incident holds.
+- **Office Removal (`api.delete_office`)**: Draft or unused offices with zero historical `office_visits` / `audit_events` / `emergency_gate_records` can be permanently deleted; offices with historical records require archival.
+- **End-of-Day Visitor Accountability (`/admin/visitors?tab=reports`)**: Super Admins review unconfirmed campus exits or office arrivals after operating hours (`api.get_accountability_summary`) and record verified resolutions (`api.resolve_visitor_accountability`).
+- **Emergency & Overdue SMS Broadcasts (`/admin/settings`)**: Super Admins and Admins send SMS alerts via Cloud Android Gateway (`POST /api/admin/sms`, see [docs/SMS_INTEGRATION.md](./SMS_INTEGRATION.md)).
 
 ### 11.9 Office Directory Lifecycle, Single-Source Sidebar Nav, Period Analytics, Campus Calendar & Inactivity Timeout
 - **Office Lifecycle & Pre-Approval Policy**: Offices progress through `draft -> published -> archived`. Unused `draft` offices can be deleted via **Delete Draft** (`api.delete_draft_office`), whereas published/used offices must use **Archive** (`api.archive_office` with staff handling choice). Superadmins govern per-office `requires_approval_before_pass` (default `true`).

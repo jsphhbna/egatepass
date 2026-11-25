@@ -29,9 +29,10 @@ flowchart TD
 
 ## 2. Ingestion Controls & Anti-Abuse Measures
 
-### 2.1 Camera-Only Capture Constraint
-- Valid ID and facial photos must be captured directly from a physical camera stream (MediaDevices API / WebRTC).
-- File upload pickers and photo gallery selection are disabled on mobile devices to prevent upload of pre-recorded, manipulated, or downloaded synthetic images.
+### 2.1 Capture Constraints (Online Portal vs. Kiosk)
+- **Live Selfie Photo**: Must be captured directly from a physical camera stream (MediaDevices API / WebRTC) across both the online portal (`/get-pass`) and walk-in kiosk (`/kiosk`).
+- **Valid ID Capture**: Online registration (`/get-pass`) accepts either camera capture or supported `JPEG`, `PNG`, or `WebP` file uploads; walk-in kiosk (`/kiosk`) ID capture remains camera-only.
+- **Peak Mode Override**: When Super Admin enables Peak Mode, valid ID capture can be selectively skipped while live selfie capture remains mandatory.
 
 ### 2.2 Server-Authorized Upload Intents
 - Clients cannot upload arbitrary files directly to Supabase Storage.
@@ -61,26 +62,27 @@ The `visitor-photos` and `visitor-ids` Supabase Storage buckets are marked **Pri
 
 ```mermaid
 sequenceDiagram
-    participant Guard as Guard Console
+    participant GuardStation as Guard Station Device (/guard)
     participant API as Vercel API (/api/evidence)
     participant DB as PostgreSQL Database
     participant Storage as Private Supabase Storage
 
-    Guard->>API: GET /api/evidence?id={evidence_uuid} (Bearer {staff_jwt})
+    GuardStation->>API: GET /api/evidence?id={evidence_uuid} (Bearer {device_jwt})
     API->>DB: Query visitor_evidence metadata
-    API->>DB: Verify Guard Session & Pending Pass Queue (status == 'pending')
+    API->>DB: Verify Guard Station Gate Match & Portal Pass (inside/exited)
     API->>Storage: Download Private Object Server-Side
     Storage-->>API: Image Stream
-    API-->>Guard: Stream Image with Private Headers & Sandbox CSP
+    API-->>GuardStation: Stream Photo/Vehicle Image with Private Headers & Sandbox CSP
 ```
 
 | Actor | Read Evidence | Request Intent | Delete Evidence | Authorization Mechanism |
 |---|---|---|---|---|
 | **Anonymous Public** | **DENIED** | Allowed (with Turnstile) | **DENIED** | No public read access |
-| **Visitor** | Local camera preview | Allowed (own session) | **DENIED** | Session / Upload intent |
+| **Visitor** | Local preview only | Allowed (own session) | **DENIED** | Session / Upload intent |
 | **Kiosk Device** | Local camera preview | Allowed (kiosk device) | **DENIED** | Device bearer token |
-| **Guard** | Allowed (Pending queue) | **DENIED** | **DENIED** | `/api/evidence?id=<uuid>` |
-| **Admin** | Allowed (Audit / Holds) | **DENIED** | **DENIED** | `/api/evidence?id=<uuid>` |
+| **Guard Station (`guard_station`)** | `photo` & `vehicle_photo` at assigned gate (`portal`, `inside`/`exited`); `id` denied (`403`) | **DENIED** | **DENIED** | `/api/evidence?id=<uuid>` |
+| **Office Staff** | Appointment portrait preview via signed office token | **DENIED** | **DENIED** | `/api/passes/office/portrait-preview` |
+| **Admin** | Allowed (Audit / Holds / Legacy review) | **DENIED** | **DENIED** | `/api/evidence?id=<uuid>` |
 | **Super Admin** | Allowed | **DENIED** | Manual Purge only | `/api/evidence?id=<uuid>` |
 | **Retention Engine** | **DENIED** | **DENIED** | Automatic Purge | Service-role maintenance |
 

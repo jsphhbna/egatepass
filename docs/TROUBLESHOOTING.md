@@ -112,7 +112,7 @@ flowchart TD
   SELECT user_id, display_name, role, active FROM public.staff_profiles WHERE user_id = auth.uid();
   ```
 - **Safe Resolution**:
-  Ensure `staff_profiles` contains an active profile (`active = true`) with valid role (`guard`, `admin`, or `superadmin`).
+  Ensure `staff_profiles` contains an active profile (`active = true`) with valid active role (`admin`, `superadmin`, or `office_staff`; legacy `guard` accounts are disabled).
 
 ---
 
@@ -348,7 +348,7 @@ flowchart TD
 - **Likely Cause**:
   An offline action conflicted with server state recorded before the outage (e.g. an offline approval was queued for a pass that was already rejected on the server).
 - **How to Diagnose**:
-  In Super Admin Dashboard, navigate to **Reconciliation Tasks** (`/admin/reconciliation`).
+  In Admin Dashboard, navigate to **Audit Logs & Reconciliation** (`/admin/audit`, Reconciliation tab).
 - **Safe Resolution**:
   Inspect the conflicting payload and prior state. The server intentionally did NOT overwrite data. The administrator reviews and marks the task resolved.
 
@@ -376,23 +376,17 @@ flowchart TD
 ### 2.22 iPhone Mobile UX: Email Modal Keyboard Layout & Returning Visitor Freeze/Review Workflow
 
 - **Symptoms**:
-  1. **Remember Me Overlooked**: Visitors completing registration fail to enroll for Returning Visitor status because the enrollment checkbox was small, low-contrast, and placed at the very bottom of the Review step after extensive information sections.
-  2. **Email Modal Touch & Overlapping Dialogs**: On iPhone Safari (e.g. iPhone 12, 390px width), autofocus on email inputs immediately opened the iOS software keyboard, obscuring primary actions. Tapping "Continue without email" mounted `TimedSkipWarningModal` while `EmailPassModal` remained open in the DOM, creating competing focus traps and backdrop overlaps. Action buttons were side-by-side with narrow touch targets.
-  3. **Returning Visitor Verification Without Preview**: Capturing a selfie in `returning_capture` immediately submitted the image to the biometric comparison endpoint while the live camera remained active with a loading spinner, offering no frozen preview, retake option, or explicit confirmation before biometric evaluation.
-- **Root Causes**:
-  - `rememberVisitor` checkbox was rendered late in `step === 'review'` with minimal visual hierarchy and native `<input type="checkbox">` sizing (~16px).
-  - `EmailPassModal` and `TimedSkipWarningModal` were both controlled independently with Radix `Dialog`, causing DOM collisions when both were open (`showEmailModal && showSkipWarning`).
-  - Inputs used `autoFocus`, triggering native WebKit virtual keyboard focus events on modal mount.
-  - `onCaptureReturningFace()` combined frame capture, upload, and 1:1 comparison into an atomic function without an intermediate review sub-stage.
+  1. **Automatic Returning Profile Linkage (Vector Persistence Retired)**: Previously, a small `rememberVisitor` card enrolled encrypted templates. Persistent template storage is now retired (Migration 103) and returning matching runs ephemerally via `/api/passes/identify-returning` against original portrait uploads.
+  2. **Email Modal Touch & Overlapping Dialogs**: On iPhone Safari (e.g. iPhone 12, 390px width), autofocus on email inputs immediately opened the iOS software keyboard, obscuring primary actions. Tapping "Continue without email" mounted `TimedSkipWarningModal` while `EmailPassModal` remained open in the DOM, creating competing focus traps and backdrop overlaps.
+  3. **Returning Visitor Verification Without Preview**: Capturing a selfie previously submitted without frozen confirmation.
 - **Safe Resolutions**:
-  1. **Institutional Remember Me Card**: Replaced the small checkbox with a prominent institutional enrollment card styled in EARIST maroon (`#7A0A0A`) with gold/amber accents, min-height ≥ 72px, 28px custom checkbox, 16px title, 14px description, and gold "Optional" badge. Moved to the very top of `step === 'review'` (immediately following the Biometric Identity Verified badge).
-  2. **Sequential Email Skip Lifecycle**: Bound `EmailPassModal` to `isOpen={showEmailModal && !showSkipWarning}`. Selecting "Continue without email" closes the email modal portal while preserving component state; canceling the warning reopens the email modal with input values and consent intact; confirming skip advances to completed pass screen.
-  3. **Mobile-Hardened Inputs & Buttons**: Removed `autoFocus` from recipient email and verification code inputs. Added `min-h-[52px]` and `text-base` (≥ 16px) to prevent iOS auto-zoom. Replaced side-by-side modal buttons on mobile with a full-width vertical stack with `min-h-[56px]`, `gap-3` (12px vertical spacing), and full button styling for skip actions.
-  4. **Returning Visitor 7-Stage Workflow**:
-     - *Stage 1 (Live)*: Live camera feed with oval guide, "Capture Your Selfie" heading, and "Capture Selfie" action.
-     - *Stage 2 (Freeze)*: Capturing a frame freezes the still image into state, stops the camera, and transitions to review.
-     - *Stage 3 (Review)*: Displays frozen selfie preview with prominent "Retake Photo" and "Verify This Photo" buttons.
-     - *Stage 4 (Verify)*: "Verify This Photo" runs client-side quality evaluation, validates session, uploads still image, and calls `identifyReturningVisitor()`.
+  1. **Sequential Email Skip Lifecycle**: Bound `EmailPassModal` to `isOpen={showEmailModal && !showSkipWarning}`. Selecting "Continue without email" closes the email modal portal while preserving component state.
+  2. **Mobile-Hardened Inputs & Buttons**: Removed `autoFocus` from recipient email and verification code inputs (`min-h-[52px]`, `text-base`).
+  3. **Returning Visitor 7-Stage Workflow**:
+     - *Stage 1 (Live)*: Live camera feed with oval guide.
+     - *Stage 2 (Freeze)*: Capturing a frame freezes the still image and stops the camera.
+     - *Stage 3 (Review)*: Displays frozen selfie preview with "Retake Photo" and "Verify This Photo".
+     - *Stage 4 (Verify)*: "Verify This Photo" validates session/quality and transmits the transient selfie in-memory via multipart payload to `/api/passes/identify-returning` (never uploaded to Storage).
      - *Stage 5 (Match Accepted)*: Retains matched selfie blob for subsequent pass issuance and advances to `returning_confirm`.
      - *Stage 6 (Match Rejected)*: Displays clear inline error near still image preview with "Retake Selfie" button without navigating away or losing selected profile candidate.
      - *Stage 7 (Cleanup)*: Cleans up object URLs and camera streams on navigation, reset, or unmount.
@@ -428,12 +422,7 @@ flowchart TD
 - **Root Causes**:
   - *Conditional State Guard Bug*: In `src/pages/GetPassPage.tsx`, `onConfirmReturningVerification()` assigned address fields using `if (p.psgc.houseBuilding) setHomeBuilding(...)`, `if (p.psgc.street) setHomeStreet(...)`, and `if (p.psgc.postalCode) setPostalCode(...)`. These conditional guards prevented empty/null values from being assigned explicitly, allowing prior session values to persist and preventing a clean, deterministic state hydration contract.
   - *Missing PSGC Locality Name Fallback in Backend*: `server/routes/passes/identify-returning.ts` serialized `region.name: profile.psgc_region_name || ''`. For returning profiles created before denormalized name columns were added, names defaulted to empty strings instead of falling back to looking up `psgc_locations` by their foreign key codes.
-  - *Missing Structured Address Persistence on Profile Update*: In `server/routes/passes/issue.ts`, the `saveUpdates` flow for returning visitors only persisted `contact_number_e164`, `home_address`, and coordinates back to `returning_visitor_profiles`, omitting edited PSGC structured fields (`psgc_*_code`, `home_building`, `home_street`, `postal_code`).
-- **Safe Resolutions**:
-  1. **Typed Pure Address Hydration Helper**: Created `src/lib/returningAddressHydration.ts` with `hydrateReturningAddress(profile)`. Guarantees a fully-specified `HydratedAddressState` (`selectedPsgc`, `homeBuilding`, `homeStreet`, `postalCode`) with explicit `?? ''` fallbacks, eliminating conditional assignments and cross-profile session leaks.
-  2. **Unconditional State Hydration in GetPassPage**: `onConfirmReturningVerification()` invokes `hydrateReturningAddress(p)` and applies all four setters unconditionally before navigating to `step === 'returning_confirm'`.
-  3. **Backend Locality Name Fallback Resolution**: In `server/routes/passes/identify-returning.ts`, if `profile.psgc_region_name`, `profile.psgc_city_municipality_name`, or `profile.psgc_barangay_name` are missing, a query against `public.psgc_locations` resolves the exact administrative names from the dataset without altering existing database records.
-  4. **Complete Profile Update Persistence**: In `server/routes/passes/issue.ts`, the `saveUpdates` handler now resolves and updates all structured address columns (`psgc_region_code`, `psgc_province_code`, `psgc_city_code`, `psgc_barangay_code`, `psgc_*_name`, `home_building`, `home_street`, `postal_code`, `postal_code_source`) in `returning_visitor_profiles` when the visitor opts in.
+  - *Returning PSGC Updates (`saveUpdates`)*: When saving updates, `server/routes/passes/issue.ts` writes PSGC locality codes/names (`psgc_*`) with `requested_postal_code: null` (postal codes retired in Migration 103), and `hydrateReturningAddress()` returns `postalCode: ''`.
 
 ---
 
@@ -452,21 +441,9 @@ flowchart TD
 - **Safe Resolutions**:
   1. **Step 1 Turnstile Token Acquisition**: `onFormNext()` executes `turnstileRef.current.executeChallenge()` and provides the acquired token to `createPortalIssueTransaction(freshCaptchaToken)`. On challenge failure or expiration, it halts and displays an error toast without advancing to `step = 'visit'`.
   2. **Profile Isolation for New Visitors**: Migration 60 (`20261104170754_returning_visitor_privacy_hardening_and_linkage_repair.sql`) updates `api.issue_online_pass_v6` so `registration_mode = 'new'` never links or reuses an existing returning profile, instead inserting an independent profile.
-  3. **V2 Evidence-Kind Binding & Single-Use ID Authorization**: Preview tokens use format `v2.<profileId>.<kind>.<expiresAt>.<nonce>.<sig>` with 300s TTL. Tokens issued for `kind=photo` are rejected with 403 `forbidden_evidence_kind` if requested for `kind=id`. ID preview requires calibrated verification and is consumed atomically via `api.consume_id_preview_authorization_v1`.
-  4. **Provisional Mode Separation**: Provisional mode returns `verificationState = 'provisional'`, `guardVerificationRequired = true`, and sets `historicalIdUrl = null`. The UI displays an amber "Provisional Match (Guard Verification at Gate)" banner. Calibrated mode requires documented calibration evidence (`RETURNING_FACE_CALIBRATION_VERSION`) or fails closed.
-
-
-- **Symptoms**:
-  1. **Silent Profile Update Failure**: A returning visitor opts in to update their saved profile on the Welcome Back screen (`saveReturningUpdates: true`), and pass issuance succeeds with a 201 response, but changes to their address or contact number are not saved to `returning_visitor_profiles`.
-  2. **Postal Code Source Degradation**: A returning visitor whose postal code was verified by PHLPost (`postalCodeSource: 'PHLPost'`) opens the AddressCascadingSelector and clicks "Confirm Address" without making changes; the saved postal code source changes from `'PHLPost'` to `'manual'`, losing its auto-filled badge.
-- **Root Causes**:
-  - *Unchecked PostgREST Error & Zero Row Update*: In `server/routes/passes/issue.ts`, `saveUpdates` awaited `.update(profileUpdate).eq('id', ret.profileId)` without checking `{ error }` and without verifying `updatedRows.length > 0`. If a database constraint failed or the profile ID did not match an active row, the failure was silently swallowed and the response claimed success.
-  - *Missing Postal Resolution in Address Hydration*: `hydrateReturningAddress()` initialized `postalCode` and `postalCodeSource`, but did not reconstruct `postalResolution`. Consequently, when `AddressCascadingSelector` opened, `postalResolution` was null, leading `handleConfirm()` to treat the postal code as a manual entry.
-- **Safe Resolutions**:
-  1. **PostgREST Inspection & Row Count Verification**: `issue.ts` executes `.update(profileUpdate).eq('id', ret.profileId).select('id')`, explicitly checks `updateErr`, checks `updatedRows.length === 0`, and fails closed if PSGC location lookup fails.
-  2. **Pass Issuance Survival & Status Reporting**: Pass issuance always succeeds regardless of profile update status. The 201 response includes `returningProfileUpdate: 'updated' | 'failed' | 'not_requested'`, allowing `GetPassPage.tsx` to surface an honest, non-blocking toast notification if profile persistence fails.
-  3. **PHLPost Metadata Reconstruction**: `hydrateReturningAddress()` reconstructs `postalResolution` (`isAutoFilled: true`, `mappingType: 'exact_barangay'`) whenever `postalCode` exists with source `PHLPost`.
-  4. **Preservation of Unchanged Source**: In `AddressCascadingSelector.tsx`, `handleConfirm()` verifies `isUnchangedPostal` and preserves `initialAddress.postalCodeSource` and `postalResolution`, preventing degradation to `'manual'`.
+  3. **V3 Actor-Bound Evidence-Kind Preview Tokens**: Preview tokens use format `v3.<profileId>.<actorId>.<kind>.<expiresAt>.<nonce>.<sig>` with 300s TTL. Tokens issued for `kind=photo` are rejected with 403 `forbidden_evidence_kind` if requested for `kind=id`. ID preview requires calibrated verification and is consumed atomically via `api.consume_id_preview_authorization_v1`.
+  4. **Provisional Mode Separation**: Provisional mode returns `verificationState = 'provisional'`, `guardVerificationRequired = true`, and sets `historicalIdUrl = null`. The UI displays an amber "Provisional Match (Guard Verification at Gate)" banner. Calibrated mode requires a signed calibration artifact or fails closed.
+  5. **PHLPost Retirement Note**: Client/server postal code lookups and automatic postal filling were retired in Migration 103 (`20261114000200`); `hydrateReturningAddress()` always yields `postalCode: ''`.
 
 ---
 

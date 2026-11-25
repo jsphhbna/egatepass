@@ -73,16 +73,16 @@ flowchart TD
     IsRecovery -->|No| ActorLookup
 
     ActorLookup --> StaffCheck{"Record in staff_profiles<br>AND active == true?"}
-    StaffCheck -->|Yes| StaffRole["Resolved Role: office_staff / guard / admin / superadmin"]
+    StaffCheck -->|Yes| StaffRole["Resolved Role: office_staff / admin / superadmin<br>(legacy guard disabled)"]
     StaffCheck -->|No| DeviceCheck{"Record in devices<br>AND status == active<br>AND deleted_at IS NULL?"}
 
-    DeviceCheck -->|Yes| DeviceRole["Resolved Device: entry / exit / kiosk<br>Bound to Assigned Gate"]
+    DeviceCheck -->|Yes| DeviceRole["Resolved Device: entry / exit / kiosk /<br>guard_station / emergency_device"]
     DeviceCheck -->|No| AnonVisitor
 ```
 
 ### Identity Resolution Rules:
 1. **Anonymous Visitors**: Have valid Supabase Auth anonymous UIDs. Confined to requesting upload intents and submitting pass issuance.
-2. **Staff Members**: Identified by a matching row in `public.staff_profiles` where `active = true`. Full operational eligibility also requires a confirmed Auth email (`email_confirmed_at IS NOT NULL`), completed password onboarding (`must_change_password = false`), privacy acceptance (`privacy_accepted_at IS NOT NULL`), an unconfined session (not recovery-confined), and an authorized staff role (`guard`, `admin`, `superadmin`, `office_staff`). Human staff accounts operate under an optional TOTP Multi-Factor Authentication (MFA) policy: accounts without verified TOTP factors authenticate with password only and operate at Authenticator Assurance Level 1 (`aal1`), while accounts with at least one verified factor must complete a TOTP challenge to achieve Authenticator Assurance Level 2 (`aal2`) before gaining access to staff routes and protected operations.
+2. **Staff Members**: Identified by a matching row in `public.staff_profiles` where `active = true`. Full operational eligibility also requires a confirmed Auth email (`email_confirmed_at IS NOT NULL`), completed password onboarding (`must_change_password = false`), privacy acceptance (`privacy_accepted_at IS NOT NULL`), an unconfined session (not recovery-confined), and an active staff role (`admin`, `superadmin`, `office_staff`; legacy `guard` accounts are disabled on sign-in with `legacy_guard_role_disabled`). Human staff accounts operate under an optional TOTP Multi-Factor Authentication (MFA) policy: accounts without verified TOTP factors authenticate with password only and operate at Authenticator Assurance Level 1 (`aal1`), while accounts with at least one verified factor must complete a TOTP challenge to achieve Authenticator Assurance Level 2 (`aal2`) before gaining access to staff routes and protected operations.
 3. **Managed Devices**: Identified by a matching row in `public.devices` where `status = 'active'` and `deleted_at IS NULL`. Types: `entry`, `exit`, `kiosk`, `guard_station`, `emergency_device`. All managed devices are strictly exempt from human 15-minute inactivity sign-out (`HumanInactivityGuard.tsx` & `/api/auth/session-activity`).
 4. **Recovery Sessions**: Explicitly flagged when authenticated via recovery magic links. Confined strictly to password reset and blocked from scanner, guard, and admin operations (`recovery_session_forbidden`).
 
@@ -117,30 +117,29 @@ sequenceDiagram
 
 ## 4. Institutional Role & Permission Matrix
 
-| Operation / Capability | Anonymous Visitor | Kiosk Device | Entry Scanner | Exit Scanner | Office Staff | Guard | Admin | Super Admin |
+| Operation / Capability | Anonymous Visitor | Kiosk Device | Entry / Exit Scanner | Guard Station Device | Emergency Device | Office Staff | Admin | Super Admin |
 |---|---|---|---|---|---|---|---|---|
 | **Register Visitor Pass** (`/api/passes/issue`) | Allowed | Allowed | Denied | Denied | Denied | Denied | Denied | Denied |
 | **Request Upload Intent** (`api.create_upload_intent`) | Allowed | Allowed | Denied | Denied | Denied | Denied | Denied | Denied |
 | **Request QR Code by Email** (`/api/passes/email`) | Allowed | Allowed | Denied | Denied | Denied | Denied | Denied | Denied |
 | **Request Specific Visit** (`/api/request-office-visit`) | Allowed | Allowed | Denied | Denied | Denied | Denied | Denied | Denied |
-| **Office Visits Query** (`/api/office/visits`) | Denied | Denied | Denied | Denied | **Allowed** (Assigned) | Denied | **Allowed** | **Allowed** |
-| **Decide Specific Visit** (`/api/office/decide`) | Denied | Denied | Denied | Denied | **Allowed** (Assigned) | Denied | **Allowed** | **Allowed** |
-| **Confirm Office Arrival** (`/api/office/confirm-arrival`) | Denied | Denied | Denied | Denied | **Allowed** (Assigned) | Denied | **Allowed** | **Allowed** |
-| **Scan Entry Pass** (`/api/scan-pass`, mode: `entry`) | Denied | Denied | **Allowed** | Denied | Denied | Denied | Denied | Denied |
-| **Scan Exit Pass** (`/api/scan-pass`, mode: `exit`) | Denied | Denied | Denied | **Allowed** | Denied | Denied | Denied | Denied |
-| **Guard Queue RPC** (`api.guard_dashboard_page`) | Denied | Denied | Denied | Denied | Denied | **Allowed** | **Allowed** | **Allowed** |
-| **Approve / Reject Pass** (`/api/decide-visit`) | Denied | Denied | Denied | Denied | Denied | **Allowed** | **Allowed** | **Allowed** |
-| **Stream Evidence Image** (`/api/evidence`) | Denied | Denied | Denied | Denied | Denied | **Allowed** (Pending) | **Allowed** | **Allowed** |
-| **Manage Staff Accounts** (`/api/admin/users`, `/api/create-user`) | Denied | Denied | Denied | Denied | Denied | Denied | **Allowed** | **Allowed** |
+| **Office Visits Query / Decide / Confirm Arrival** (`/api/office/*`) | Denied | Denied | Denied | Denied | Denied | **Allowed** (Assigned) | **Allowed** | **Allowed** |
+| **Scan Entry / Exit Pass** (`/api/scan-pass`) | Denied | Denied | **Allowed** | Denied | Denied | Denied | Denied | Denied |
+| **Guard Station Live Feed** (`/api/guard-station-feed`) | Denied | Denied | Denied | **Allowed** | Denied | Denied | **Allowed** | **Allowed** |
+| **Emergency Offline Sync** (`/api/gate/emergency-device`) | Denied | Denied | Denied | Denied | **Allowed** | Denied | Denied | Denied |
+| **Legacy Kiosk Review** (`api.guard_dashboard_page`, `/api/decide-visit`) | Denied | Denied | Denied | Denied | Denied | Denied | **Allowed** | **Allowed** |
+| **Stream Evidence Image** (`/api/evidence`) | Denied | Denied | Denied | **Allowed** (Photo at gate) | Denied | Denied | **Allowed** | **Allowed** |
+| **Manage Staff & Offices** (`/api/admin/users`, `/api/create-user`, `/api/admin/offices`) | Denied | Denied | Denied | Denied | Denied | Denied | **Allowed** (Scoped) | **Allowed** |
+| **Delete Decommissioned Account** (`POST/DELETE /api/delete-user`) | Denied | Denied | Denied | Denied | Denied | Denied | Denied | **Allowed** |
 | **Manage Hardware Devices** (`/api/admin/devices`, `/api/create-device`) | Denied | Denied | Denied | Denied | Denied | Denied | **Allowed** | **Allowed** |
 | **Manage Incident Holds** (`/api/admin/holds`) | Denied | Denied | Denied | Denied | Denied | Denied | View Only | **Allowed** (Create & Release) |
-| **Update System Settings** (`/api/update-settings`) | Denied | Denied | Denied | Denied | Denied | Denied | Denied | **Allowed** |
+| **Update System Settings & Return-to-Zero** (`/api/update-settings`, `/api/admin/settings`) | Denied | Denied | Denied | Denied | Denied | Denied | Denied | **Allowed** |
+| **SMS Broadcasts** (`/api/admin/sms`) | Denied | Denied | Denied | Denied | Denied | Denied | **Allowed** | **Allowed** |
 | **Execute Retention Maintenance** (`/api/admin/retention-maintenance`) | Denied | Denied | Denied | Denied | Denied | Denied | Denied | **Allowed** / Cron |
-| **Review Reconciliation Tasks** (`/api/reconciliation-items`) | Denied | Denied | Denied | Denied | Denied | Denied | Denied | **Allowed** |
+| **Review Reconciliation & Accountability** (`/api/reconciliation-items`, `/api/admin/records`) | Denied | Denied | Denied | Denied | Denied | Denied | Denied | **Allowed** |
 | **Promote Admin to Super Admin** (`POST /api/update-user` -> `api.update_staff_profile`) | Denied | Denied | Denied | Denied | Denied | Denied | Denied | **Allowed** |
-| **Self-Service MFA Settings** (`/account/security`) | Denied | Denied | Denied | Denied | **Allowed** | Denied | **Allowed** | **Allowed** |
-| **Inspect Staff MFA Factors** (`GET /api/auth/mfa`) | Denied | Denied | Denied | Denied | Denied | Denied | Denied | **Allowed** |
-| **Reset Staff MFA Factor** (`POST /api/auth/mfa`) | Denied | Denied | Denied | Denied | Denied | Denied | Denied | **Allowed** (Password Re-auth) |
+| **Self-Service MFA Settings** (`/account/security`) | Denied | Denied | Denied | Denied | Denied | **Allowed** | **Allowed** | **Allowed** |
+| **Inspect & Reset Staff MFA** (`/api/auth/mfa`) | Denied | Denied | Denied | Denied | Denied | Denied | Denied | **Allowed** |
 
 ---
 
@@ -178,7 +177,7 @@ flowchart TD
   1. **Database trigger**: `private.protect_last_superadmin` on `public.staff_profiles` blocks any UPDATE that would leave zero active Super Admins.
   2. **Stored Procedure**: `api.update_staff_profile` enforces operator checks and translates trigger violations.
   3. **API Layer**: `POST /api/update-user` translates trigger exception `23514` to HTTP 409 `cannot_remove_last_superadmin`, which the UI presents as *"Cannot demote or deactivate the last remaining Super Admin."*
-- **Safe Decommissioning**: Standard decommissioning consists of deactivating the staff profile via Staff Management and suspending the Auth account (`ban_duration: '876000h'`). Direct Auth user deletion in Supabase Dashboard is blocked by `ON DELETE RESTRICT` foreign key constraints on `staff_profiles.user_id`.
+- **Safe Decommissioning & Permanent Deletion**: Standard decommissioning deactivates the staff profile (`POST /api/decommission-user`) and suspends Auth login (`ban_duration: '876000h'`). Migration `20261123000800` changed `staff_profiles.user_id` to `ON DELETE CASCADE`, enabling Super Admins to permanently delete eligible decommissioned accounts via `POST/DELETE /api/delete-user` (`api.delete_staff_account` + `auth.admin.deleteUser`) while preserving anonymized `audit_events` attribution and blocking removal when active incident holds exist.
 
 ---
 
@@ -410,9 +409,9 @@ Supabase Security Advisor reports `auth_leaked_password_protection` as disabled.
 
 ### 13.5 Content Security Policy (CSP) Directives Justification
 The production CSP header enforces tight origins with explicit exemptions:
-- `wasm-unsafe-eval`: Authoritatively required for client-side Tesseract.js WebAssembly OCR compilation in browser web workers.
+- `wasm-unsafe-eval`: Authoritatively required for client-side Tesseract.js / PaddleOCR WebAssembly OCR compilation in browser web workers.
 - `style-src 'unsafe-inline'`: Required for dynamic toast notification styling (Sonner) and Radix UI dialog portal locking.
-- `script-src 'unsafe-inline'`: Required for Cloudflare Turnstile explicit widget execution.
+- `script-src 'self' 'wasm-unsafe-eval' https://challenges.cloudflare.com`: Restricts external scripts strictly to the Cloudflare Turnstile widget (no `script-src 'unsafe-inline'` exception).
 
 Cloudflare Turnstile protects public visitor registration, staff/device authentication, and password recovery from automated attacks:
 - **Public Visitor Portal**: Non-intrusive challenge required before issuing an anonymous session.
@@ -479,7 +478,7 @@ When an operation spans multiple systems (PostgreSQL, Storage, Resend) and encou
 | **X-Frame-Options** | `DENY` | Prevents clickjacking by blocking iframe rendering |
 | **X-Content-Type-Options** | `nosniff` | Blocks MIME-type sniffing by browsers |
 | **Referrer-Policy** | `strict-origin-when-cross-origin` | Limits referrer leakage to third-party domains |
-| **Permissions-Policy** | `camera=(self), microphone=(), geolocation=()` | Restricts hardware API access to own origin |
+| **Permissions-Policy** | `camera=(self), microphone=(), geolocation=(self), browsing-topics=()` | Restricts hardware and topic APIs per `vercel.json` |
 
 ---
 
@@ -579,8 +578,8 @@ During connectivity outages, operational access authority delegates to the Guard
 
 ## 21. Institutional Upgrades Security Contracts
 
-### 21.1 Safe Staff Permanent Decommissioning Security Invariants
-- **Zero Row Deletion & Attribution Preservation**: Under `staff_profiles.user_id -> auth.users.id ON DELETE RESTRICT`, hard deletion would break historical audit events and attribution. Decommissioning permanently updates `decommissioned_at = now()`, `decommissioned_by`, `decommission_reason`, and forces `active = false` without removing the relational record.
+### 21.1 Safe Staff Decommissioning & Permanent Deletion Invariants
+- **Two-Stage Attribution & Deletion (`ON DELETE CASCADE`)**: Decommissioning (`POST /api/decommission-user`) disables login via `decommissioned_at`, `decommissioned_by`, `decommission_reason`, and `active = false`. Under Migration `20261123000800` (`staff_profiles.user_id -> auth.users.id ON DELETE CASCADE`), Super Admins can subsequently delete eligible decommissioned accounts permanently via `POST/DELETE /api/delete-user` (`api.delete_staff_account` + `auth.admin.deleteUser`), preserving anonymized `audit_events` attribution and rejecting deletion when active `incident_holds` reference the actor.
 - **Super Admin Re-Authentication**: Destructive permanent decommissioning requires the acting Super Admin's current password. Verification executes on an isolated Supabase Auth client and terminates immediately with `signOut({ scope: 'local' })` to guarantee the Super Admin's primary browser session remains intact.
 - **Auth Identity Suspension**: The Auth identity is suspended with an 876,000-hour ban (`banned_until`), disabling credential login. If Supabase Auth synchronization fails, the database change commits and an administrative reconciliation item is registered (`reconciliationRequired: true`) rather than rolling back truthful database status.
 
@@ -683,10 +682,7 @@ The shared pure SVG template generator (`src/lib/digitalPassArtifact.ts`) uses s
 - **Strict 1:1 Biometric Matching (`/api/passes/identify-returning`)**:
   - Full retirement of 1:N gallery matching and arbitrary 1st-to-2nd candidate margin checks (`RETURNING_FACE_MIN_MARGIN`).
   - Visitor captures a fresh live selfie. No government ID re-upload is required or permitted for returning visitors.
-  - The server decrypts the selected profile's enrolled face template from `returning_face_templates` using AES-256-GCM. Decryption failures fail closed with HTTP 500 `biometric_decryption_failed`.
-  - Performs 1:1 cosine similarity comparison against the fresh selfie descriptor using calibrated threshold `RETURNING_FACE_MIN_COSINE` (0.45).
-  - Cosine score `< 0.45` fails closed with HTTP 200 `{ matched: false, reason: "low_similarity" }` and records an audit attempt with outcome `low_similarity`.
-  - Successful comparison issues a single-use, cryptographically signed `matchToken` (HMAC-SHA256) bound to `actorId`, `requestId`, `profileId`, and `photoIntentId` with 15-minute expiration.
+  - **Superseded Vector Persistence (Migration 103)**: Earlier pre-release phases stored encrypted embeddings in `returning_face_templates` (`RETURNING_VISITOR_TEMPLATE_KEY`). In the current production release, `returning_face_templates` and `api.enroll_returning_visitor_v1` are retired; `/api/passes/identify-returning` compares the transient live selfie in RAM directly against the candidate's original registration portrait at SFace threshold `0.363` (`RETURNING_FACE_MIN_COSINE`) and issues a single-use `matchToken` (300s / 5-minute TTL).
 - **Pass Issuance Token Binding (`/api/passes/issue`)**:
   - When `registrationMode === 'returning'`, pass issuance requires both `profileId` and `matchToken`.
   - The server verifies that the token matches the stored HMAC digest in `returning_identity_attempts`, matches the active actor session, has not expired, and has not been previously consumed.
@@ -697,7 +693,7 @@ The shared pure SVG template generator (`src/lib/digitalPassArtifact.ts`) uses s
   - Silent default fallback to Manila / EARIST Barangay 408 is eliminated.
   - Legacy Leaflet map coordinates, Nominatim reverse geocoding, and browser GPS prompts are retired from online registration.
 - **Symmetric Idempotency Replay**:
-  - Replay requests on `/api/passes/issue` compare all incoming PSGC fields (`psgc_region_code`, `psgc_province_code`, `psgc_city_code`, `psgc_barangay_code`, `home_building`, `home_street`, `postal_code`) against the stored `visitors` record.
+  - Replay requests on `/api/passes/issue` compare all active incoming PSGC fields (`psgc_region_code`, `psgc_province_code`, `psgc_city_code`, `psgc_barangay_code`, `home_building`, `home_street`; historical postal columns are forced `null` for new issuance) against the stored `visitors` record.
   - Any discrepancy in address or vehicle declaration returns HTTP 409 `payload_mismatch`.
 
 ### 25.3 Migration 51 Database Hardening & Performance Advisor
@@ -716,7 +712,7 @@ The shared pure SVG template generator (`src/lib/digitalPassArtifact.ts`) uses s
 - **Safe Capability Introspection (`/api/passes/capabilities`)**:
   - Returns safe diagnostic booleans (`returningVisitorAvailable`, `facialRecognitionConfigured`, `returningCryptoConfigured`, `returningCalibrationConfigured`).
   - Strict secret isolation: never exposes raw encryption keys, HMAC secrets, or numeric cosine thresholds to client browsers.
-  - Fail-closed security rule: If `RETURNING_FACE_MIN_COSINE`, `RETURNING_VISITOR_TEMPLATE_KEY`, or `RETURNING_MATCH_TOKEN_SECRET` is unset or fails length checks, `returningVisitorAvailable` reports `false` and the safety gate modal blocks returning visitor entry.
+  - Fail-closed security rule: If `RETURNING_MATCH_TOKEN_SECRET` is unset or fails length checks (or calibrated mode lacks a verified artifact), `returningVisitorAvailable` reports `false`. (`RETURNING_VISITOR_TEMPLATE_KEY` is retired and no longer required after Migration 103.)
 - **Pairwise 1:1 Biometric Calibration (`scripts/calibrate-returning-face.mjs`)**:
   - Implements genuine vs impostor 1:1 pairwise cosine similarity distributions.
   - Prevents arbitrary, unvalidated biometric thresholds from being deployed to production without empirical evidence.
@@ -724,12 +720,7 @@ The shared pure SVG template generator (`src/lib/digitalPassArtifact.ts`) uses s
 
 ### 26.2 Postal Code Resolution & Manila Barangay 856 Multi-Code Handling
 - **PHLPost Locality Resolution Architecture**:
-  - `resolvePostalCode(cityCode, barangayCode)` classifies resolution outcomes into:
-    - `exact_barangay`: Verified 1:1 barangay mapping (e.g. Barangay 408 -> 1008). Auto-filled.
-    - `unique_city`: Single postal code across all barangays in municipality (e.g. Mandaluyong -> 1550). Auto-filled.
-    - `multi_code_city`: Multiple postal delivery zones across the city without an authoritative barangay-level publication (e.g. City of Manila, Barangay 856). Prompts user entry/confirmation.
-    - `unmapped`: Locality absent from postal reference tables. Prompts manual entry.
-    - `service_unavailable`: Database reference table connection failure. Informs user and gracefully permits manual entry without blocking registration.
+  - **PHLPost Retirement Note**: Client/server postal code lookups (`resolvePostalCode`, `postal_code_reference`) were retired in Migration 103 (`20261114000200`); `psgc_locations` now validates 10-digit administrative locality codes directly without collecting postal codes.
   - Institutional Light Design System Integrity: Full contrast compliance across all address selection and confirmation dialogs using institutional maroon (`#7A0A0A`), gold accent (`#F2C94C`), dark text (`#172033`), and white surfaces (`#FFFFFF`).
 
 ## 27. Provisional Biometric Threshold Governance & Decoupled Enrollment Security
@@ -747,10 +738,7 @@ The shared pure SVG template generator (`src/lib/digitalPassArtifact.ts`) uses s
 ### 27.2 Decoupled Enrollment Security Boundaries
 - **Transparent Institutional Retention**:
   - Registration records and historical reference portraits/IDs are retained according to the institution's configured data retention policies.
-- **Safe Template Key Management**:
-  - Face templates are encrypted with AES-256-GCM using `RETURNING_VISITOR_TEMPLATE_KEY` (32 bytes / 64 hex characters).
-  - Enrollment requires ONLY the template key and does not depend on verification threshold or match token secret readiness.
-  - Decryption occurs transiently in RAM during 1:1 verification; raw embeddings and decrypted vectors are never persisted or returned to the browser.
+- **Retired Vector Storage Notice**: Encrypted face templates in `returning_face_templates` (`RETURNING_VISITOR_TEMPLATE_KEY`) were retired and truncated in Migration 103 (`20261114000200`). Live returning matching runs strictly in ephemeral RAM without persistent embedding storage.
 - **Match Token Cryptographic Defense**:
   - Upon successful 1:1 verification, server issues a short-lived opaque `matchToken` (300 seconds / 5 minutes TTL).
   - Database stores only `match_token_digest` (SHA-256 of `${matchToken}:${RETURNING_MATCH_TOKEN_SECRET}`).
@@ -868,7 +856,7 @@ The shared pure SVG template generator (`src/lib/digitalPassArtifact.ts`) uses s
 ## 30. Emergency Device Cryptography, Human Inactivity Timeout, Retention Freeze & Truthful Runtime Controls
 
 ### 30.1 Emergency Device Signed Manifests & AES-GCM Vault
-- Offline gate continuity runs exclusively on managed `emergency_device` terminals (`/device/emergency`). Online sync fetches a 24-hour gate-scoped manifest signed server-side via ECDSA P-256 SHA-256 (`IEEE P1363`, `server/lib/emergency-manifest.ts`) and verified in browser WebCrypto (`src/lib/offline/emergencyManifestVerifier.ts`). Signing keys reside in `private.emergency_signing_keys` (`api.get_active_emergency_signing_key`, `api.store_emergency_signing_key`, optional `EMERGENCY_MANIFEST_SIGNING_PRIVATE_KEY` override) with `service_role`-only access.
+- Offline gate continuity runs exclusively on managed `emergency_device` terminals (`/emergency-device`). Online sync fetches a 24-hour gate-scoped manifest signed server-side via ECDSA P-256 SHA-256 (`IEEE P1363`, `server/lib/emergency-manifest.ts`) and verified in browser WebCrypto (`src/lib/offline/emergencyManifestVerifier.ts`). Signing keys reside in `private.emergency_signing_keys` (`api.get_active_emergency_signing_key`, `api.store_emergency_signing_key`, optional `EMERGENCY_MANIFEST_SIGNING_PRIVATE_KEY` override) with `service_role`-only access.
 - Offline visitor entries are stored encrypted in browser IndexedDB using AES-GCM (`src/lib/offline/emergencyCryptoIdb.ts`), require physical ID visual inspection attestation (`PHYSICAL_ID_ATTESTATION_TEXT`), respect the default-OFF Superadmin exception toggle (`allow_emergency_exception`), synchronize monotonically (`api.record_emergency_sync_item`), carry the permanent `OFFLINE MODE RECORDED` classification (zero automatic QR issuance), and require Admin/Superadmin manual reconciliation (`api.reconcile_emergency_gate_record`).
 
 ### 30.2 Human 15-Minute Inactivity Timeout & Device Exemption
@@ -927,7 +915,7 @@ The shared pure SVG template generator (`src/lib/digitalPassArtifact.ts`) uses s
   - If no verified TOTP factor exists for the staff user, `aal1` is permitted.
   - If one or more verified factors exist, access is denied with HTTP 403 Forbidden (`{ error: 'mfa_required' }`).
   - In the event of an upstream Admin Auth API error during factor lookup, the middleware fails closed with HTTP 403 Forbidden.
-- **Database Helper `private.staff_mfa_is_satisfied()` (Migration 49 / `20261116000200_optional_staff_totp_mfa.sql`)**:
+- **Database Helper `private.staff_mfa_is_satisfied()` (Migration 109 / `20261116000200_optional_staff_totp_mfa.sql`)**:
   - Evaluates `auth.uid()` against `auth.mfa_factors` looking for verified factors (`status = 'verified'`).
   - If no verified factor exists, returns `true` (AAL1 or AAL2 satisfied).
   - If a verified factor exists, returns `true` only if `(auth.jwt()->>'aal') = 'aal2'`.

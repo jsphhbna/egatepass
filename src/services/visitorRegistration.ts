@@ -1326,65 +1326,6 @@ export async function verifyPortalIdentity(
   return body;
 }
 
-export async function preflightLiveFace(
-  transactionOrClient: PortalIssueTransaction | SupabaseClient,
-  requestIdOrPhotoIntentId: string,
-  maybePhotoIntentId?: string
-): Promise<{ ok: boolean; message?: string; reasonCode?: string }> {
-  let token: string;
-  let requestId: string;
-  let photoIntentId: string;
-
-  if (maybePhotoIntentId !== undefined) {
-    // Legacy client signature: (client, requestId, photoIntentId)
-    const client = transactionOrClient as SupabaseClient;
-    requestId = requestIdOrPhotoIntentId;
-    photoIntentId = maybePhotoIntentId;
-    const { data: { session } } = await client.auth.getSession();
-    token = session?.access_token || '';
-  } else {
-    // Portal transaction signature: (transaction, photoIntentId)
-    const transaction = transactionOrClient as PortalIssueTransaction;
-    requestId = transaction.requestId;
-    photoIntentId = requestIdOrPhotoIntentId;
-    const verified = await getVerifiedPortalSession(transaction);
-    token = verified.token;
-  }
-
-  if (!token) throw new PortalSessionError('portal_session_missing', 'Authentication session required for face quality check.');
-
-  const res = await fetch('/api/passes/verify-identity', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      requestId,
-      photoIntentId,
-      mode: 'preflight_face',
-    }),
-  });
-
-  const body = (await res.json().catch(() => null)) as {
-    ok?: boolean;
-    error?: string;
-    message?: string;
-    reasonCode?: string;
-    preflightPassed?: boolean;
-  } | null;
-
-  if (!res.ok || !body?.ok) {
-    return {
-      ok: false,
-      message: body?.message || body?.error || 'Face quality verification failed.',
-      reasonCode: body?.reasonCode,
-    };
-  }
-
-  return { ok: true, message: body.message };
-}
-
 export interface ReturningLookupCandidate {
   candidateToken: string;
   maskedName: string;

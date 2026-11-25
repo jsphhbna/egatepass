@@ -11,8 +11,13 @@ export interface HomeLocation {
   lon: number;
 }
 
+const viteOsmTileUrl =
+  typeof import.meta !== 'undefined'
+    ? (import.meta as unknown as { env?: { VITE_OSM_TILE_URL?: string } }).env?.VITE_OSM_TILE_URL
+    : undefined;
+
 export const DEFAULT_OSM_TILE_URL =
-  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_OSM_TILE_URL) ||
+  viteOsmTileUrl ||
   'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
 
 export const DEFAULT_OSM_ATTRIBUTION =

@@ -109,7 +109,7 @@ Operational State & Governance:
 
 Before handing over to live institutional operations, transient test data generated during user acceptance testing must be reviewed and removed safely.
 
-> **CRITICAL DATA INTEGRITY WARNING**: Never execute bulk wildcard deletion scripts or drop tables in production. Foreign-key relationships across `passes`, `visitors`, `visitor_evidence`, `visit_events`, and `staff_profiles` must be respected. Specifically, `public.staff_profiles.user_id` references `auth.users(id)` with `ON DELETE RESTRICT`; attempting to delete an Auth user in the dashboard while their staff profile exists will be rejected. Standard decommissioning is deactivation in Staff Management plus Auth access suspension (`ban_duration: '876000h'`).
+> **CRITICAL DATA INTEGRITY WARNING**: Never execute bulk wildcard deletion scripts or drop tables in production. Foreign-key relationships across `passes`, `visitors`, `visitor_evidence`, `visit_events`, and `staff_profiles` must be respected. While Migration `20261123000800` enables `ON DELETE CASCADE` on `public.staff_profiles.user_id`, permanent removal of decommissioned developer/staff accounts should ALWAYS be executed via the application lifecycle (`POST /api/delete-user` -> `api.delete_staff_account` + Auth removal) rather than raw SQL so the last-active-Super-Admin trigger, incident-hold guards, and anonymized `audit_events` attribution remain intact. Standard initial decommissioning disables login (`POST /api/update-user` with Auth `ban_duration: '876000h'`), followed by permanent deletion once confirmed safe.
 
 ### Recommended Procedural Order:
 1. **Identify Test Records**:

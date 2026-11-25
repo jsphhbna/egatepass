@@ -10,7 +10,7 @@ To evaluate portability and plan long-term ownership, institutional administrato
 
 | Logical System Component | Logical Responsibility & Security Invariant | Current Implementation Choice | Coupling Level | Portability & Handoff Reality |
 |---|---|---|---|---|
-| **Web Client Tier** | Single-Page Application (SPA) providing visitor self-service, scanner interfaces, and administration consoles. Access controls enforced on all views. | React 19 + Vite 6 + TypeScript + Tailwind CSS | Highly Portable | Standard static asset bundle (`dist/`). Can be hosted behind any HTTPS web server with SPA rewrite support. |
+| **Web Client Tier** | Single-Page Application (SPA) providing visitor self-service, scanner interfaces, and administration consoles. Access controls enforced on all views. | React 19 + Vite 8 + TypeScript + Tailwind CSS | Highly Portable | Standard static asset bundle (`dist/`). Can be hosted behind any HTTPS web server with SPA rewrite support. |
 | **Application & API Runtime** | REST and serverless HTTP handlers executing validation, cryptography, rate limiting, and administrative RPC orchestration. | Vercel Serverless Functions (Node.js 24.x) | Partially Coupled | Route logic lives in `server/` and entrypoints in `api/`. Packaged for Vercel; running outside Vercel requires an HTTP server adapter process. |
 | **Authentication Service** | Identity management, password hashing, session tokens, staff accounts, scanner credentials, and auth lifecycle hooks. | Supabase Auth (GoTrue) | Tightly Coupled | High runtime coupling to `@supabase/supabase-js` and Supabase Auth admin methods. Replacing requires rewrite of identity layer. |
 | **Relational Database** | ACID data store with Row-Level Security (RLS), stored procedures in `api` schema, triggers, and audit ledger. | Supabase PostgreSQL 17.x | Tightly Coupled | Uses Postgres features, PostgREST conventions, and Supabase security schemas (`auth`, `storage`). Migration requires Supabase-compatible PostgreSQL. |
@@ -72,7 +72,7 @@ In this model, administrative ownership of existing cloud accounts is transferre
 - **Cloudflare Turnstile**: Widget ownership transferred to institutional Cloudflare account.
 - **Domain Registrar**: Domain management transferred via get.tech / Orderbox auth code or organization contact update.
 
-*Refer to [CLEAN_DATA_HANDOFF.md](file:///docs/CLEAN_DATA_HANDOFF.md) for administrative ownership procedures.*
+*Refer to [CLEAN_DATA_HANDOFF.md](./CLEAN_DATA_HANDOFF.md) for administrative ownership procedures.*
 
 ---
 
@@ -103,7 +103,7 @@ In this model, EARIST deploys an on-premises or private-cloud Supabase-compatibl
 #### Invariants That Must Be Preserved:
 1. **Auth Identities**: Must preserve UUID identity structure, password hash algorithms, and session token issuance.
 2. **Database Schema & Migrations**: All migrations in `supabase/migrations/` must be executed sequentially up to the current migration head.
-3. **RPC Contracts**: All 27 functions in `schema('api')` must exist with identical signatures, parameter names, and security definer contexts.
+3. **RPC Contracts**: All functions in `schema('api')` (including pass issuance, gate scanning, office visits, accountability, SMS quotas, and maintenance) must exist with identical signatures, parameter names, and security definer contexts.
 4. **Row-Level Security (RLS)**: Default deny on all tables, with granular role-based policies strictly enforced.
 5. **Private Storage Buckets**: Must create buckets `visitor-photos` and `visitor-ids` configured as strictly private (`public = false`). Storage RLS policies in `storage.objects` must match migration definitions.
 6. **Auth Send Email Hook**: Must configure GoTrue to dispatch authentication emails to `POST /api/auth/send-email-hook`.
@@ -170,12 +170,12 @@ When deploying the application tier on an EARIST-owned server or virtual machine
 The reverse proxy must inject the following headers on all responses:
 
 ```text
-Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https://*.supabase.co; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none';
-Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://challenges.cloudflare.com; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https://*.supabase.co https://*.tile.openstreetmap.org https://tile.openstreetmap.org; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://challenges.cloudflare.com https://*.tile.openstreetmap.org https://tile.openstreetmap.org https://paddle-model-ecology.bj.bcebos.com; frame-src https://challenges.cloudflare.com; media-src 'self' data: blob:; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self';
+Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
 X-Content-Type-Options: nosniff
 X-Frame-Options: DENY
 Referrer-Policy: strict-origin-when-cross-origin
-Permissions-Policy: camera=(self), microphone=(), geolocation=(), browsing-topics=()
+Permissions-Policy: camera=(self), microphone=(), geolocation=(self), browsing-topics=()
 ```
 
 *Security Warning: Never permit eval execution (unsafe-eval) in the Content-Security-Policy.*
@@ -198,12 +198,12 @@ server {
     ssl_certificate_key /etc/ssl/private/gatepass.key;
 
     # Security Headers
-    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https://*.supabase.co; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none';" always;
-    add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://challenges.cloudflare.com; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https://*.supabase.co https://*.tile.openstreetmap.org https://tile.openstreetmap.org; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://challenges.cloudflare.com https://*.tile.openstreetmap.org https://tile.openstreetmap.org https://paddle-model-ecology.bj.bcebos.com; frame-src https://challenges.cloudflare.com; media-src 'self' data: blob:; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self';" always;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-Frame-Options "DENY" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-    add_header Permissions-Policy "camera=(self), microphone=(), geolocation=(), browsing-topics=()" always;
+    add_header Permissions-Policy "camera=(self), microphone=(), geolocation=(self), browsing-topics=()" always;
 
     root /var/www/egatepass/dist;
     index index.html;
@@ -315,16 +315,15 @@ The platform produces structured operational telemetry that should be integrated
 | **Email Delivery Failures** | Bounced, complained, or failed delivery events | Resend Dashboard / `audit_events` | Query `public.audit_events` where `action = 'email.failed'` |
 | **Webhook Ingestion Errors** | 400 Bad Signature on `/api/webhooks/resend` | Vercel Function Logs | Monitor 4xx count on webhook endpoint |
 | **Retention Failures** | Non-200 response or error trace in maintenance run | Vercel Cron Logs | Cron execution exit code != 0 or JSON response `status != "success"` |
-| **Reconciliation Tasks** | Unresolved items in `public.reconciliation_tasks` | Admin Console (`AdminReconciliation.tsx`) | Alert when `status = 'pending'` count exceeds threshold |
+| **Reconciliation Tasks** | Unresolved items in `public.reconciliation_tasks` | Admin Console (`/admin/audit`, `AdminAuditLogs.tsx`) | Alert when `status = 'pending'` count exceeds threshold |
 | **Storage Failures** | Failed presigned upload or download requests | Supabase Storage Logs | Application error log pattern matching on storage exceptions |
 | **Abuse Thresholds** | Excessive 429 Too Many Requests responses | Vercel Logs | Reverse proxy rate limit alert or SIEM log correlation |
 | **Database Connectivity** | Connection pool timeouts or database query drops | Supabase Database Metrics | Database connection health monitoring |
 
 ### Dedicated Health Endpoint Status
 > [!NOTE]
-> **No dedicated production health check endpoint (e.g. `/api/health`) currently exists in the application.**
-> Institutional load balancers or container orchestrators requiring an HTTP health probe must either probe the root URL (`GET /` returning HTTP 200 with static HTML) or implement a dedicated lightweight health handler.
-> **Status**: `FOLLOW-UP ENGINEERING REQUIRED` if a dedicated health route is mandated by institutional infrastructure.
+> **Production health telemetry is served at `GET /api/system/health` (`server/routes/system/health.ts`), while a bare `/api/health` alias does not exist.**
+> Institutional load balancers or container orchestrators should probe `GET /api/system/health` (verifies database connectivity and runtime configuration) or the root static document (`GET /`). If external monitors expect `/api/health` specifically, configure a reverse-proxy alias or rewrite (`FOLLOW-UP ENGINEERING REQUIRED`).
 
 ---
 
@@ -332,7 +331,7 @@ The platform produces structured operational telemetry that should be integrated
 
 Before performing any infrastructure cutover, domain change, or database migration:
 
-- [ ] **Pre-Migration Full Backup**: Execute complete database dump and private storage backup according to [BACKUP_AND_RECOVERY.md](file:///docs/BACKUP_AND_RECOVERY.md).
+- [ ] **Pre-Migration Full Backup**: Execute complete database dump and private storage backup according to [BACKUP_AND_RECOVERY.md](./BACKUP_AND_RECOVERY.md).
 - [ ] **Migration Plan & Rollback Criteria**: Establish explicit go/no-go rollback checkpoints.
 - [ ] **Secret Rotation**: Re-issue high-entropy secrets (`PASS_TOKEN_SECRET`, `CRON_SECRET`, `RATE_LIMIT_HMAC_SECRET`) if migrating servers.
 - [ ] **Application Origin Update**: Set `APP_BASE_URL` to the new canonical origin (e.g. `https://gatepass.example.edu`).
@@ -341,4 +340,4 @@ Before performing any infrastructure cutover, domain change, or database migrati
 - [ ] **Webhook Endpoints Update**: Update Supabase Auth Send Email Hook and Resend Webhook destinations to the new hostname.
 - [ ] **Security Headers Validation**: Verify reverse proxy emits full CSP, HSTS, and framing protections.
 - [ ] **Storage Bucket Privacy Check**: Confirm `visitor-photos` and `visitor-ids` are private.
-- [ ] **End-to-End QA Run**: Complete full verification cycle according to [MANUAL_QA_RUNBOOK.md](file:///docs/MANUAL_QA_RUNBOOK.md).
+- [ ] **End-to-End QA Run**: Complete full verification cycle according to [MANUAL_QA_RUNBOOK.md](./MANUAL_QA_RUNBOOK.md).

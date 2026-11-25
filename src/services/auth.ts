@@ -77,7 +77,6 @@ export async function resetPasswordWithRecoverySession(recoveryToken: string, ne
   }
   throw new Error('Password could not be updated. Please request a new reset link.');
 }
-export const completeGuardPasswordChange = completeStaffPasswordChange;
 
 export function evaluateAuthTurnstilePolicy(
   isProd: boolean,

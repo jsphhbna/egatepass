@@ -12,13 +12,13 @@
 - **Capstone Proponents:** Mary Joy Cagande, Joseph Habana, Mon Gerald Lanon, and Jeferson Tambis
 - **Capstone Adviser:** Dhani San Jose
 - **Academic Year:** 2026–2027 | November 2026
-- **Word Document (.docx) Deliverable:** [`diagram-output/EARIST_E-GatePass_System_Diagrams_Documentation.docx`](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/EARIST_E-GatePass_System_Diagrams_Documentation.docx)
+- **Word Document (.docx) Deliverable:** [`EARIST_E-GatePass_System_Diagrams_Documentation.docx`](./EARIST_E-GatePass_System_Diagrams_Documentation.docx)
 
 ---
 
 ## Deliverables Summary
 
-All 10 system diagrams are rendered strictly according to the **Academic Black and White Standard** (`#000000` text, lines, borders on a `#FFFFFF` canvas) at **300-DPI equivalent High-Resolution Print Quality**. Each diagram is available as a High-Res PNG, Scalable Vector Graphic (SVG), and editable Draw.io XML (`.drawio`) file in [`diagram-output/`](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output):
+All 10 system diagrams are stored as High-Resolution PNG, Scalable Vector Graphic (SVG), and editable Draw.io XML (`.drawio`) deliverables in [`diagram-output/`](../diagram-output):
 
 1. **Figure 1: Context Diagram (Level 0 DFD)** — Gane & Sarson / Yourdon & DeMarco Notation
 2. **Figure 2: Use Case Diagram** — UML 2.5 Use Case Specification
@@ -31,182 +31,160 @@ All 10 system diagrams are rendered strictly according to the **Academic Black a
 9. **Figure 9: Entity Relationship Diagram (ERD)** — Crow's Foot Relational Data Model
 10. **Figure 10: Physical Database Schema Diagram** — PostgreSQL 17 Physical Schema
 
+> **Synchronization Note:** Several static SVG/PNG/Draw.io diagram exports were authored prior to later releases and retain simplified/thesis labels; the prose specifications below describe the verified current production system implementation.
+
 ---
 
 ## 1. Context Diagram (Data Flow Diagram Level 0)
 
-![Figure 1: Context Diagram](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-dfd-context-level-0.png)
+![Figure 1: Context Diagram](../diagram-output/egatepass-dfd-context-level-0.png)
 
-- **Deliverables:** [PNG](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-dfd-context-level-0.png) | [SVG](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-dfd-context-level-0.svg) | [Draw.io](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-dfd-context-level-0.drawio)
+- **Deliverables:** [PNG](../diagram-output/egatepass-dfd-context-level-0.png) | [SVG](../diagram-output/egatepass-dfd-context-level-0.svg) | [Draw.io](../diagram-output/egatepass-dfd-context-level-0.drawio)
 - **Standard / Model Notation:** Gane & Sarson / Yourdon & DeMarco DFD Notation
 - **Architectural Scope & Boundary:**
-  - **Process 0 (Central System):** Encapsulates the complete E-GatePass application, including the Next.js frontend, Vercel serverless function runtime, PostgreSQL database, and Supabase Object Storage.
-  - **Human Actors:**
-    - `Visitor`: Submits personal registration information, ID document snapshots, and live webcam portraits via `/get-pass` or `/kiosk`; receives dynamic QR passes and email confirmations.
-    - `Security Personnel / Guard`: Scans visitor QR passes via optical turnstile cameras; receives visitor validation dossiers (photo, ID snapshot, destination, vehicle details) and live campus occupancy headcounts.
-    - `Campus Office Personnel`: Reviews appointment requests via `/office`; approves, rejects, or reschedules visits.
-    - `System Administrator`: Configures campus calendar closures, manages staff accounts, and oversees security audit logs via `/admin/*`.
+  - **Process 0 (Central System):** React 19 + TypeScript + Vite 8 Single Page Application (`src/`), Vercel Node.js 24 Serverless Functions (`api/` + `server/`), Supabase PostgreSQL 17 database, Supabase Auth, and private Supabase Storage (`visitor-photos`, `visitor-ids`).
+  - **Human & Terminal Actors:**
+    - `Visitor`: Submits registration details, live selfie (camera-only), and valid ID (camera or JPEG/PNG/WebP upload online; camera-only on kiosk) via `/get-pass` or `/kiosk`; verifies email OTPs and receives QR passes.
+    - `Guard Station & Scanners`: Entry (`/scan/entry`) and Exit (`/scan/exit`) scanner terminals scan QR passes via `html5-qrcode` / `jsqr`; `/guard` displays live station feeds (`GET /api/guard-station-feed`) and photo/vehicle evidence (`GET /api/evidence`) for `portal` passes; `/emergency-device` handles offline gate intake during outages.
+    - `Campus Office Personnel`: Reviews specific-person visit requests via `/office`, confirms physical arrivals, manages office closures, and tracks attendance.
+    - `System Administrator / Super Admin`: Configures campus closures, retention policies, SMS broadcasts, device accounts, staff accounts, thermal print templates, accountability resolution, and audit logs via `/admin/*`.
   - **Verified External Cloud Services:**
-    - `Cloudflare Turnstile`: Validates cryptographic bot mitigation tokens (`challenges.cloudflare.com/turnstile/v0/siteverify`).
-    - `Resend Email Service`: Dispatches transactional HTML pass receipts and office approval alerts (`api.resend.com/emails`).
-    - `NHTSA vPIC API`: Decodes vehicle VIN and model catalog information (`vpic.nhtsa.dot.gov/api/vehicles/`).
-  - **Internalized Datastores:** PostgreSQL/Supabase and Vercel hosting are modeled inside the system boundary. PSA PSGC data is internalized into database table `psgc_locations` and bundled datasets; Geoapify is inactive.
+    - `Cloudflare Turnstile` (bot protection ONLY): Managed widget verified inside Supabase Auth (`signInAnonymously` / Auth recovery).
+    - `Resend`: Transactional emails and signed delivery webhooks (`api.resend.com`).
+    - `NHTSA vPIC API`: Vehicle make/model reference lookup (`vpic.nhtsa.dot.gov/api/vehicles/`) with in-memory fallback.
+    - `SMS Gateway for Android`: Cloud relay (`api.sms-gate.app`) for emergency/overdue SMS broadcasts and `sms-intake` webhooks.
 
 ---
 
 ## 2. Use Case Diagram
 
-![Figure 2: Use Case Diagram](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-use-case-diagram.png)
+![Figure 2: Use Case Diagram](../diagram-output/egatepass-use-case-diagram.png)
 
-- **Deliverables:** [PNG](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-use-case-diagram.png) | [SVG](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-use-case-diagram.svg) | [Draw.io](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-use-case-diagram.drawio)
+- **Deliverables:** [PNG](../diagram-output/egatepass-use-case-diagram.png) | [SVG](../diagram-output/egatepass-use-case-diagram.svg) | [Draw.io](../diagram-output/egatepass-use-case-diagram.drawio)
 - **Standard / Model Notation:** UML 2.5 Use Case Specification Standard
 - **Architectural Scope & Boundary:**
-  - **Primary Human Actors:** Visitor, Returning Visitor, Security Guard, Campus Office Staff, and System Administrator.
-  - **Supporting External Actors:** Cloudflare Turnstile (Bot Engine), NHTSA vPIC (Vehicle Registry), and Resend (Email Engine).
-  - **`<<include>>` Dependencies:**
-    - `UC1 (Online Pre-Registration)` and `UC2 (Kiosk Walk-In)` unconditionally include `UC5 (Capture & Verify ID Document via OCR)` and `UC6 (Capture Live Biometric Facial Portrait)`.
-    - `UC1` includes `UC7 (Verify Humanity via Turnstile Challenge)`.
-    - Registration flows include `UC9 (Issue Digital Gate Pass)`, which in turn includes `UC10 (Dispatch Pass Email)`.
-    - Gate Scanning (`UC12`) includes `UC13 (Inspect Visitor Details)` and `UC14 (Authorize / Deny Physical Campus Access)`.
-  - **`<<extend>>` Dependencies:**
-    - `UC3 (Re-Identify Visitor via Facial Vector / Phone)` extends registration when recurring visitor history exists.
-    - `UC8 (Declare Vehicle)` extends registration conditionally when vehicular entry is required.
-    - `UC19 (Emergency Lockdown)` conditionally overrides `UC14 (Authorize Access)` to enforce an immediate gate freeze.
+  - **Primary Actors:** Visitor, Returning Visitor, Scanner/Guard Station Devices, Emergency Device, Office Staff, Admin / Super Admin.
+  - **Supporting External Services:** Cloudflare Turnstile, Resend, NHTSA vPIC, Android SMS Gateway.
+  - **Key Flows:** Online registration (`/get-pass`), Kiosk walk-in (`/kiosk`) with MXW01 BLE or browser print fallback, optional browser OCR name autofill, optional vehicle declaration, office pre-approval for restricted personnel visits, QR scanning (`/api/scan-pass`), live guard monitoring (`/guard`), accountability reporting, and emergency outage intake (`/emergency-device`).
 
 ---
 
 ## 3. Activity Flow Chart (UML Swimlane Model)
 
-![Figure 3: Activity Flow Chart](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-activity-flowchart.png)
+![Figure 3: Activity Flow Chart](../diagram-output/egatepass-activity-flowchart.png)
 
-- **Deliverables:** [PNG](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-activity-flowchart.png) | [SVG](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-activity-flowchart.svg) | [Draw.io](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-activity-flowchart.drawio)
+- **Deliverables:** [PNG](../diagram-output/egatepass-activity-flowchart.png) | [SVG](../diagram-output/egatepass-activity-flowchart.svg) | [Draw.io](../diagram-output/egatepass-activity-flowchart.drawio)
 - **Standard / Model Notation:** UML 2.5 Activity Diagram with Swimlane Partitioning
 - **Swimlane Execution Architecture:**
-  - **1. Visitor (Mobile / Kiosk):** Selects registration type (Pre-Registration or Walk-in), inputs required biological sex, contact, purpose, and PSGC address, captures ID and live webcam selfie, receives dynamic QR pass, presents pass to gate scanner, and departs campus.
-  - **2. Frontend Client (React 19 SPA):** Runs client-side form validation, Tesseract.js WebAssembly OCR text extraction, live webcam liveness and blur checking, camera unmirroring calibration, and transient buffer purging upon cancellation.
-  - **3. Backend Services & Edge APIs:** Evaluates Turnstile challenge tokens, queries returning visitor history, normalizes vehicle information, invokes atomic pass issuance (`api.issue_pass`), and dispatches transactional confirmation emails via Resend.
-  - **4. PostgreSQL & Supabase Storage:** Enforces Row Level Security (RLS), commits transactional records, verifies 32-byte SHA-256 token digests, logs timestamped `visit_events`, and tracks real-time occupancy.
-  - **5. Campus Security & Office Host:** Host offices review restricted visit requests on `/office`; security guards inspect visitor dossiers on `/guard` and authorize physical barrier unlocking.
+  - **1. Visitor (Mobile / Kiosk):** Completes Turnstile + Data Privacy consent, enters demographics and PSGC cascading address (optional sex/gender on online portal), captures live selfie + valid ID (skipped for ID when Peak Mode applies), requests upload intents (`api.create_upload_intent`), submits `POST /api/passes/issue`, verifies email before QR reveal (with 5-second timed skip), and scans QR at entry/exit turnstiles.
+  - **2. Frontend Client (React 19 + Vite 8 SPA):** Runs client validation, local Tesseract.js/PaddleOCR name extraction, oval framing checks, and `/api/passes/abandon-intent` cleanup on abort.
+  - **3. Vercel Serverless APIs (`Node.js 24`):** Validates upload intent magic bytes/sizes/SHA-256, invokes `api.issue_online_pass_v6` (or `api.issue_pass`), issues HMAC-SHA256 bearer tokens, and dispatches Resend emails.
+  - **4. Supabase PostgreSQL 17 & Private Storage:** Enforces RLS, stores SHA-256 `token_digest`, appends immutable `visit_events` & `audit_events`, and maintains `office_visits`.
 
 ---
 
 ## 4. Data Flow Diagram — Level 1 Decomposition
 
-![Figure 4: Data Flow Diagram Level 1](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-dfd-level-1.png)
+![Figure 4: Data Flow Diagram Level 1](../diagram-output/egatepass-dfd-level-1.png)
 
-- **Deliverables:** [PNG](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-dfd-level-1.png) | [SVG](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-dfd-level-1.svg) | [Draw.io](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-dfd-level-1.drawio)
+- **Deliverables:** [PNG](../diagram-output/egatepass-dfd-level-1.png) | [SVG](../diagram-output/egatepass-dfd-level-1.svg) | [Draw.io](../diagram-output/egatepass-dfd-level-1.drawio)
 - **Standard / Model Notation:** Gane & Sarson DFD Level 1 Functional Decomposition
-- **Functional Decomposition:**
-  - `1.0 Visitor Registration & Biometric Verification`: Ingests personal registration info, validates PSGC locations against `D4`, processes ID card images via OCR, captures live webcam portraits, and validates Turnstile siteverify tokens.
-  - `2.0 Campus Office Visit Request Governance`: Routes visit requests to host departments, checks office working hours and calendar closures in `D3`, and records approval/rejection decisions.
-  - `3.0 Gate Pass Issuance & QR Token Cryptography`: Generates 32-byte SHA-256 HMAC token digests, executes atomic `api.issue_pass` commits to `D1` and `D2`, and triggers Resend confirmation emails.
-  - `4.0 Physical Gate Access Scanning & Validation`: Ingests optical QR video frames from guards, validates token digests against `D2`, checks calendar closures in `D3`, updates pass status, and logs gate entry/exit events to `D5`.
-  - `5.0 Security Monitoring, Audit Logging & Administration`: Ingests administrative configuration, logs system events to `D5`, aggregates live occupancy headcounts, and enforces instant gate lockdowns.
 - **Relational Data Stores:**
   - `D1`: Visitors & Returning Profiles (`visitors`, `returning_visitor_profiles`)
   - `D2`: Digital Gate Passes (`passes`)
-  - `D3`: Campus Directory & Closures (`campus_offices`, `campus_calendar_closures`)
-  - `D4`: Philippine PSGC Locations (`psgc_locations`)
-  - `D5`: Security Audit Ledger & Events (`audit_events`, `visit_events`)
-  - `D6`: Evidence Storage & Uploads (`upload_intents`, Supabase Storage buckets)
+  - `D3`: Campus Directory & Closures (`offices`, `office_personnel`, `office_visits`, `campus_calendar_closures`)
+  - `D4`: Philippine PSGC Locations (`psgc_locations`, plus bundled `data/reference/psgc/*.json`)
+  - `D5`: Security Audit Ledger & Events (`audit_events`, `visit_events`, `visitor_accountability_resolutions`)
+  - `D6`: Evidence Storage & Uploads (`upload_intents`, `visitor_evidence`, private Storage buckets `visitor-photos` & `visitor-ids`)
 
 ---
 
 ## 5. Multi-Tier Architectural Framework
 
-![Figure 5: Architectural Framework](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-architectural-framework.png)
+![Figure 5: Architectural Framework](../diagram-output/egatepass-architectural-framework.png)
 
-- **Deliverables:** [PNG](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-architectural-framework.png) | [SVG](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-architectural-framework.svg) | [Draw.io](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-architectural-framework.drawio)
+- **Deliverables:** [PNG](../diagram-output/egatepass-architectural-framework.png) | [SVG](../diagram-output/egatepass-architectural-framework.svg) | [Draw.io](../diagram-output/egatepass-architectural-framework.drawio)
 - **Standard / Model Notation:** 5-Tier Layered Software Architecture Model
 - **Architectural Layers:**
-  - **Tier 1 (Presentation Layer):** Responsive visitor web portal (`/get-pass`, `/track`), self-service kiosk PWA (`/kiosk`), dual-camera scanner terminal (`/guard`, `/scan/*`), office portal (`/office`), and admin dashboard (`/admin/*`).
-  - **Tier 2 (Edge Security Layer):** Cloudflare Anycast CDN, DDoS scrubbing, Turnstile bot challenges, strict Content Security Policy (CSP), HSTS preload, and Vercel edge routing middleware with client-side transient memory sandboxing.
-  - **Tier 3 (Application & Business Logic Layer):** Vercel Node.js 20 serverless API execution runtime, client Tesseract.js OCR worker, facial quality and transient vector comparator, QR matrix generator, and Resend email dispatcher.
-  - **Tier 4 (Data Persistence Layer):** Supabase PostgreSQL 17 database, Row Level Security (RLS) policies, PgBouncer transaction connection pooler (Port 6543), append-only audit ledgers, and encrypted S3 object storage buckets.
-  - **Tier 5 (External Services Layer):** Resend transactional email infrastructure, NHTSA vPIC automotive API, and PSA Philippine Standard Geographic Code (PSGC) reference dataset.
+  - **Tier 1 (Presentation):** Vite 8 + React 19 SPA (`/`, `/get-pass`, `/track`, `/kiosk`, `/scan/entry`, `/scan/exit`, `/guard`, `/emergency-device`, `/office`, `/account/security`, `/admin/*`).
+  - **Tier 2 (Domain & Perimeter Security):** Authoritative DNS on `get.tech` / `Orderbox`, Cloudflare Turnstile bot challenge (Managed mode ONLY), strict CSP/HSTS/XFO headers in `vercel.json`.
+  - **Tier 3 (Serverless Application & Business Logic):** 6 grouped Vercel Node.js 24 Serverless Functions (`api/admin`, `api/auth`, `api/device`, `api/gate`, `api/passes`, `api/system`), client Tesseract.js / PaddleOCR workers, YuNet/SFace ephemeral RAM comparison (`onnxruntime-node`), and `sharp` QR/pass image rendering.
+  - **Tier 4 (Data Persistence):** Supabase PostgreSQL 17 with RLS & PgBouncer, private Supabase Storage (`visitor-photos`, `visitor-ids`), append-only audit ledgers, and AES-GCM IndexedDB vaults on `/emergency-device`.
+  - **Tier 5 (External Services):** Resend transactional email & delivery webhooks, NHTSA vPIC API, and Android SMS Gateway (`api.sms-gate.app`).
 
 ---
 
 ## 6. System Block Diagram
 
-![Figure 6: System Block Diagram](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-block-diagram.png)
+![Figure 6: System Block Diagram](../diagram-output/egatepass-block-diagram.png)
 
-- **Deliverables:** [PNG](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-block-diagram.png) | [SVG](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-block-diagram.svg) | [Draw.io](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-block-diagram.drawio)
+- **Deliverables:** [PNG](../diagram-output/egatepass-block-diagram.png) | [SVG](../diagram-output/egatepass-block-diagram.svg) | [Draw.io](../diagram-output/egatepass-block-diagram.drawio)
 - **Standard / Model Notation:** IEEE Standard Subsystem Block Interconnection Model
 - **Modular Subsystems:**
-  - `Block 1: User Interaction & Terminals`: Mobile web clients, all-in-one touchscreen kiosks, Esc/POS thermal printers, optical scanning webcams, and guard Toughbook tablets.
-  - `Block 2: Edge Security & Perimeter Defense`: Cloudflare Anycast DNS, Layer 3/4/7 DDoS mitigation, Turnstile bot defense, Vercel edge routing, and transient memory session cleanup.
-  - `Block 3: Optical Capture & Biometrics`: Webcam MediaStream controllers, dynamic unmirroring viewports, Tesseract.js OCR engine, and facial liveness/vector comparison.
-  - `Block 4: Pass Management & Cryptography`: Atomic pass issuance controllers, SHA-256 HMAC cryptographic token generation, finite state machine evaluators, and office review queues.
-  - `Block 5: Physical Gate Control & Audit`: ZXing optical QR decoders, guard visual dossiers, turnstile barrier unlock triggers, append-only visit ledgers, and emergency lockdown relays.
-  - `Block 6: Cloud Data & External Services`: Supabase PostgreSQL 17, Row Level Security, PgBouncer pooler, S3 storage buckets, Supabase Realtime WebSocket engine, Resend, and NHTSA APIs.
+  - `Block 1: User Interaction & Terminals`: Mobile web clients, kiosk stations, MXW01 58mm BLE thermal printer (+ browser fallback), optical scanning cameras, and emergency/guard terminals.
+  - `Block 2: Perimeter & Browser Security`: `get.tech` / `Orderbox` DNS, Cloudflare Turnstile widget, Vercel TLS/headers, and isolated portal vs. operator Supabase browser storage keys.
+  - `Block 3: Optical Capture, OCR & Ephemeral Matching`: Browser WebRTC webcam capture, Tesseract.js / PaddleOCR name extraction, and in-memory 1:1 SFace provisional comparison against original portrait evidence (without storing templates).
+  - `Block 4: Pass Management & Cryptography`: `POST /api/passes/issue`, HMAC-SHA256 bearer tokens (`token_digest bytea`), `office_visits` approval workflows, and AES-256-GCM delivery outbox.
+  - `Block 5: Gate Control, Accountability & Emergency Mode`: `html5-qrcode` / `jsqr` decoding, `POST /api/scan-pass`, `GET /api/guard-station-feed`, `api.resolve_visitor_accountability`, and signed ECDSA P-256 `/emergency-device` continuity.
+  - `Block 6: Cloud Data & External SaaS`: Supabase PostgreSQL 17, RLS, Storage, Edge Functions (`send-sms`, `sms-intake`), Resend, and NHTSA vPIC.
 
 ---
 
 ## 7. Physical & Logical Network Topology Diagram
 
-![Figure 7: Network Topology Diagram](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-network-diagram.png)
+![Figure 7: Network Topology Diagram](../diagram-output/egatepass-network-diagram.png)
 
-- **Deliverables:** [PNG](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-network-diagram.png) | [SVG](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-network-diagram.svg) | [Draw.io](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-network-diagram.drawio)
+- **Deliverables:** [PNG](../diagram-output/egatepass-network-diagram.png) | [SVG](../diagram-output/egatepass-network-diagram.svg) | [Draw.io](../diagram-output/egatepass-network-diagram.drawio)
 - **Standard / Model Notation:** OSI Layered Network & Cloud Infrastructure Topology Model
 - **Network Segmentation & Protocols:**
-  - `Zone 1: Client Network Edge & Campus VLANs`: Public cellular/Wi-Fi for mobile visitors, Campus VLAN 20 (`192.168.20.0/24` - Kiosk Stations), Campus VLAN 30 (`192.168.30.0/24` - Turnstiles and Guard Toughbooks), and Campus VLAN 10 (`192.168.10.0/24` - Admin and Office Terminals). All outbound traffic uses HTTPS / Port 443.
-  - `Zone 2: Cloudflare Perimeter Network`: Global Anycast BGP IP ranges (`104.21.x.x`), terminating TLS 1.3, mitigating DDoS attacks, running Turnstile challenges, and proxying requests to Vercel compute.
-  - `Zone 3: Vercel Serverless Compute Cloud`: Global serverless microVM network executing API routes (`/api/scan/entry`, `/api/scan/exit`, `/api/turnstile/verify`) with sub-15ms edge routing and zero persistent local storage.
-  - `Zone 4: Supabase Managed Cloud VPC`: AWS Singapore region (`ap-southeast-1`), PgBouncer connection pooler on Port 6543 (Transaction Mode), PostgreSQL database on Port 5432, S3 Storage and Realtime WebSockets on Port 443.
-  - `Zone 5: External SaaS Endpoints`: Resend API (`api.resend.com:443`) for transactional notifications and NHTSA vPIC API (`vpic.nhtsa.dot.gov:443`) for vehicle decoding.
+  - **Client & Campus Terminals:** Visitor mobile browsers, kiosk stations, gate scanners, guard station displays, office portals, and admin workstations over HTTPS (Port 443).
+  - **Authoritative DNS & Bot Challenge:** `get.tech` / `Orderbox` resolves `egatepass.tech` directly to Vercel (`@ A 216.198.79.1`); Cloudflare provides Turnstile challenge verification (`challenges.cloudflare.com`) only.
+  - **Vercel Serverless Compute:** Runs the Vite SPA static assets and 6 grouped Node.js 24 Serverless API handlers (`/api/admin/*`, `/api/auth/*`, `/api/device/*`, `/api/gate/*`, `/api/passes/*`, `/api/system/*`), including `POST /api/scan-pass` (entry & exit modes).
+  - **Supabase Managed Cloud & Edge Functions:** PostgreSQL 17 (RLS + PgBouncer), Auth + Bot Protection, private S3 Storage (`visitor-photos`, `visitor-ids`), Realtime, and Deno Edge Functions (`send-sms`, `sms-intake`).
+  - **External Endpoints:** Resend (`api.resend.com`), NHTSA vPIC (`vpic.nhtsa.dot.gov`), and SMS Gateway (`api.sms-gate.app`).
 
 ---
 
 ## 8. Conceptual Framework (IPO Model)
 
-![Figure 8: Conceptual Framework](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-conceptual-framework.png)
+![Figure 8: Conceptual Framework](../diagram-output/egatepass-conceptual-framework.png)
 
-- **Deliverables:** [PNG](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-conceptual-framework.png) | [SVG](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-conceptual-framework.svg) | [Draw.io](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-conceptual-framework.drawio)
+- **Deliverables:** [PNG](../diagram-output/egatepass-conceptual-framework.png) | [SVG](../diagram-output/egatepass-conceptual-framework.svg) | [Draw.io](../diagram-output/egatepass-conceptual-framework.drawio)
 - **Standard / Model Notation:** Academic Thesis Input - Process - Output (IPO) Model
 - **Research Paradigm Structure:**
-  - `INPUT (Independent Variables)`: Visitor demographic records, mandatory biological sex, residential PSGC codes, scanned government/student ID images, live webcam facial portraits, vehicle license details, destination office parameters, Turnstile bot tokens, and optical camera streams.
-  - `PROCESS (Throughput & Transformations)`: Client-side form sanitization, Tesseract.js OCR text extraction, facial liveness analysis, Turnstile siteverify validation, atomic `api.issue_pass` RPC commit, SHA-256 HMAC cryptographic token generation, Resend email dispatch, optical QR token decoding (<500ms), pass state machine evaluation, guard visual cross-verification, and append-only audit logging.
-  - `OUTPUT (Dependent Variables)`: Cryptographically signed digital gate passes with dynamic QR matrix, printed thermal kiosk badge slips, transactional confirmation emails, electronic turnstile barrier unlocks (green indicator), guard station visual verification dossiers, real-time in-campus headcount gauges, and immutable institutional audit trails.
-  - `FEEDBACK & GOVERNANCE LOOP`: Returning visitor profile retrieval (consent-driven 30-day lifecycle), real-time overstay and duplicate pass alerts to guard view, and dynamic campus closure capacity adjustments.
+  - `INPUT`: Visitor registration data, optional sex/gender (portal), Philippine PSGC locality codes, ID images, live webcam selfies, optional vehicle details, destination office parameters, Turnstile challenge tokens, and optical QR camera streams.
+  - `PROCESS`: Client validation, local OCR name extraction, upload intent verification (magic bytes, MIME, size, SHA-256), `api.issue_online_pass_v6` / `api.issue_pass` atomic issuance, SHA-256 token digest derivation, Resend transactional email delivery, QR scanning via `/api/scan-pass`, guard station monitoring, office arrival confirmation, and end-of-day accountability reconciliation.
+  - `OUTPUT`: Signed digital QR passes, MXW01/browser printed kiosk badges, branded HTML pass emails, guard station dossiers, real-time occupancy counts, office attendance logs, accountability exception reports, and immutable audit ledgers.
 
 ---
 
 ## 9. Entity Relationship Diagram (ERD)
 
-![Figure 9: Entity Relationship Diagram](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-entity-relationship-diagram.png)
+![Figure 9: Entity Relationship Diagram](../diagram-output/egatepass-entity-relationship-diagram.png)
 
-- **Deliverables:** [PNG](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-entity-relationship-diagram.png) | [SVG](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-entity-relationship-diagram.svg) | [Draw.io](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-entity-relationship-diagram.drawio)
+- **Deliverables:** [PNG](../diagram-output/egatepass-entity-relationship-diagram.png) | [SVG](../diagram-output/egatepass-entity-relationship-diagram.svg) | [Draw.io](../diagram-output/egatepass-entity-relationship-diagram.drawio)
 - **Standard / Model Notation:** Crow's Foot Relational Data Model Specification
-- **Relational Cardinalities:**
-  - `VISITORS (1)` ||--|| `PASSES (1)`: Strict 1-to-1 unique relationship; each visitor registration maps to exactly one issued gate pass (`passes.visitor_id UNIQUE`).
-  - `VISITORS (1)` ||--o{ `VISITOR_EVIDENCE (M)`: 1-to-Many evidence items (id_front, id_back, live_capture).
-  - `VISITORS (1)` ||--o{ `UPLOAD_INTENTS (M)`: 1-to-Many temporary upload tokens.
-  - `VISITORS (1)` ||--o| `RETURNING_VISITOR_PROFILES (0..1)`: Optional 1-to-0..1 relationship connecting a visitor registration to a reusable returning profile.
-  - `RETURNING_VISITOR_PROFILES (1)` ||--o{ `RETURNING_VISITOR_VEHICLES (M)`: 1-to-Many declared vehicles.
-  - `RETURNING_VISITOR_PROFILES (1)` ||--o{ `RETURNING_FACE_TEMPLATES (M)`: 1-to-Many transient 128-dimensional biometric vectors.
-  - `PASSES (1)` ||--o{ `VISIT_EVENTS (M)`: 1-to-Many optical scan events (entry, exit, denied) recorded by hardware scanners.
-  - `OFFICES (1)` ||--o{ `OFFICE_VISITS (M)`: 1-to-Many visit appointment requests.
-  - `OFFICES (1)` ||--o{ `OFFICE_PERSONNEL (M)`: 1-to-Many assigned faculty hosts.
-  - `STAFF_PROFILES (1)` ||--o{ `AUDIT_EVENTS (M)`: 1-to-Many security actions logged by staff.
-  - `STAFF_PROFILES (1)` ||--o{ `CAMPUS_CALENDAR_CLOSURES (M)`: 1-to-Many institutional holiday declarations.
-  - `DEVICES (1)` ||--o{ `VISIT_EVENTS (M)`: 1-to-Many physical scans recorded by a hardware terminal.
-  - `PSGC_LOCATIONS (1)` ||--o{ `PSGC_LOCATIONS (M)`: Self-referential hierarchical parent-child relationship.
+- **Core Entities & Cardinalities:**
+  - `visitors (1)` ||--|| `passes (1)`: Strict 1-to-1 pass per visit (`passes.visitor_id UNIQUE`).
+  - `visitors (1)` ||--o{ `visitor_evidence (M)` & `upload_intents (M)`: Staged upload intents (`pending | claimed | expired | abandoned`) and claimed evidence (`photo`, `id`, `vehicle_photo`).
+  - `returning_visitor_profiles (1)` ||--o{ `visitors (M)` & `returning_visitor_vehicles (M)`: Consent/operational profile reuse without persistent face templates (`returning_face_templates` is retired).
+  - `passes (1)` ||--o{ `visit_events (M)` & `0..1` `visit_vehicle_declarations`: Append-only gate scans (`scan_entry`, `scan_exit`, `approved`, `rejected`, `gate_exit_unconfirmed`, etc.) and optional vehicle records.
+  - `offices (1)` ||--o{ `office_personnel (M)` & `office_visits (M)`: Office directory (`draft | published | archived`), staff assignments, and pre-approval/arrival workflows.
+  - `staff_profiles (1)` ||--o{ `audit_events (M)` & `visitor_accountability_resolutions (M)`: Staff identity governance (TOTP MFA managed by Supabase `auth.mfa_factors`) and accountability resolutions.
 
 ---
 
 ## 10. Physical Database Schema Diagram
 
-![Figure 10: Database Schema Diagram](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-database-schema.png)
+![Figure 10: Database Schema Diagram](../diagram-output/egatepass-database-schema.png)
 
-- **Deliverables:** [PNG](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-database-schema.png) | [SVG](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-database-schema.svg) | [Draw.io](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-database-schema.drawio)
+- **Deliverables:** [PNG](../diagram-output/egatepass-database-schema.png) | [SVG](../diagram-output/egatepass-database-schema.svg) | [Draw.io](../diagram-output/egatepass-database-schema.drawio)
 - **Standard / Model Notation:** PostgreSQL 17 Physical Schema Specification
 - **Physical Relational Tables & Invariants:**
-  - `public.visitors`: Governs identity, contact, required biological sex (`'male'`, `'female'`), hierarchical PSGC address attributes, purpose, and timestamp tracking. Protected by Row Level Security (RLS).
-  - `public.passes`: Stores digital pass state (`pass_status` ENUM), 32-byte binary token digest (`token_digest bytea UNIQUE`), unique public reference UUID, temporal validity bounds (`valid_from`, `valid_until`), and ingress/egress timestamps (`time_in`, `time_out`).
-  - `public.visit_events`: Append-only physical gate access log recording optical scan events, guard device pairings, gate names, and JSONB diagnostic telemetry.
-  - `public.staff_profiles`: Manages institutional staff credentials, system roles (`'admin'`, `'guard'`, `'office_staff'`), active state, and TOTP MFA secrets.
-  - `public.devices`: Hardware terminal registry binding kiosks and guard scanners by unique station identifiers.
-  - `public.offices` & `public.office_visits`: Campus department directory and visit adjudication queue.
-  - `public.audit_events`: Tamper-evident administrative audit ledger recording all system actions, actor identities, IP addresses, and resource mutations.
-  - `public.psgc_locations`: Comprehensive reference table indexing Philippine regions, provinces, cities/municipalities, and barangays.
+  - `public.visitors`: Identity (`full_name`, `contact_number`, optional `sex`), PSGC codes/labels (`psgc_region_*`, `psgc_province_*`, `psgc_city_*`, `psgc_barangay_*`), `purpose`, `visit_date`, and RLS enforcement.
+  - `public.passes`: `pass_status` enum (`issued`, `pending`, `inside`, `rejected`, `exited`, `expired`), 32-byte `token_digest bytea UNIQUE`, `public_reference`, `valid_from`, `valid_until`, `entry_scanned_at`, `time_in`, `time_out`.
+  - `public.visit_events`: Append-only gate event log (`event`, `pass_id`, `device_id`, `gate`, JSONB `meta`).
+  - `public.staff_profiles`: Staff accounts (`admin`, `superadmin`, `office_staff`; legacy `guard` disabled), `active`, `must_change_password`, `privacy_accepted_at` (`ON DELETE CASCADE` to `auth.users` managed via `api.delete_staff_account`).
+  - `public.devices`: Managed terminal identities (`kiosk`, `entry`, `exit`, `guard_station`, `emergency_device`).
+  - `public.offices`, `public.office_personnel`, `public.office_visits`, `public.campus_calendar_closures`: Institutional office directory, closures, and appointment/arrival records.
+  - `public.audit_events`, `public.visitor_accountability_resolutions`, `public.sms_logs`, `public.sms_daily_quotas`: Audit ledger, end-of-day reconciliation records, and SMS quota/activity telemetry.
