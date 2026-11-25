@@ -18,9 +18,11 @@ This document is the authoritative specification for all configuration and secre
 | `SUPABASE_SECRET_KEY` | Production Only | **Yes** | Serverless admin client (`server/supabase.ts`) | **Yes** | High-privilege Supabase service-role secret; strictly isolated to Production |
 | `PASS_TOKEN_SECRET` | Production Only | **Yes** | QR bearer token derivation (`server/routes/passes/issue.ts`) | **Yes** | High-entropy cryptographic secret (**minimum 32 characters**) for HMAC-SHA256 QR tokens |
 | `RETURNING_MATCH_TOKEN_SECRET` | Production Only | **Yes** | Returning preview tokens & biometric match tokens (`server/routes/passes/returning-photo-preview.ts`, `lookup-returning.ts`, `identify-returning.ts`, `returning-id-preview.ts`, `issue.ts`) | **Yes** | Dedicated high-entropy cryptographic secret (**minimum 32 characters**) strictly isolated from pass tokens |
-| `RETURNING_VISITOR_TEMPLATE_KEY` | Production Only | **Yes** | AES-256-GCM biometric template encryption (`server/lib/face-engine.ts`) | **Yes** | 32-byte (64-hex-character) encryption key for face descriptor protection at rest |
+| `RETURNING_VISITOR_TEMPLATE_KEY` | Retired | — | Legacy retired biometric encryption key (unused; persistent face templates disabled per Migration 103) | No | Retained in docs for historical context only; deleted from Production after `returning_face_templates` retirement |
 | `RATE_LIMIT_HMAC_SECRET` | Production Only | **Yes** | Network abuse rate limiting (`server/routes/passes/issue.ts`, `lookup-returning.ts`) | **Yes** | Dedicated high-entropy key (**minimum 32 characters**) for hashing client IP/subnet |
 | `RETURNING_FACE_THRESHOLD_MODE` | Production, Local | No | Biometric verification safety gate (`server/routes/passes/identify-returning.ts`) | No | `provisional` (default) or `calibrated`. Production runs strictly in `provisional` mode |
+| `RETURNING_FACE_MIN_COSINE` | Production, Local | No | Cosine threshold override in calibrated workflows (`server/lib/face-engine.ts`) | No | Provisional mode uses fixed SFace baseline (`0.363`) |
+| `RETURNING_VISITOR_ACTIVE_KEY_VERSION` | Retired | — | Legacy key-version selector (unused after biometric storage retirement) | No | Optional compatibility variable left unset |
 | `RETURNING_FACE_CALIBRATION_ARTIFACT` | Production, Local | No | Ed25519 signed calibration envelope (`server/lib/calibration-verifier.ts`) | No | Complete JSON envelope signed by `EARIST_BIOMETRICS_CALIBRATION_AUTHORITY`. Required for `calibrated` mode |
 | `RESEND_API_KEY` | Production Only | **Yes** | Resend REST API client (`server/email.ts`) | **Yes** | `re_...` provider-issued transactional email API key |
 | `RESEND_FROM_EMAIL` | Production, Local | No | Sender identity (`server/email.ts`) | **Yes** | Authoritative sender: `EARIST E-GatePass <notifications@egatepass.tech>` |
@@ -30,6 +32,12 @@ This document is the authoritative specification for all configuration and secre
 | `OFFICE_VISIT_HMAC_SECRET` | Production Only | **Yes** | Office portrait preview tokens & actor-bound email challenge verification tokens (`server/lib/office.ts`) | **Yes** | Dedicated high-entropy cryptographic secret (**minimum 32 characters**) strictly isolated from pass & returning tokens |
 | `OFFICE_VISIT_DELIVERY_ENCRYPTION_KEY` | Production Only | **Yes** | Office visit QR bearer token encryption & recovery outbox (`server/lib/encryption.ts`) | **Yes** | 32-byte (64-hex-character) dedicated AES-256-GCM key for pass token encryption in `public.office_visit_email_outbox` |
 | `EMERGENCY_MANIFEST_SIGNING_PRIVATE_KEY` | Production, Local | **Yes** | Optional override for ECDSA P-256 emergency manifest signing (`server/lib/emergency-manifest.ts`) | No | Optional PKCS#8 PEM override. When unset, server auto-provisions/loads active P-256 keypair via `api.get_active_emergency_signing_key` in `private.emergency_signing_keys` |
+| `SMS_GATEWAY_URL` | Production, Local | No | Cloud SMS Gateway endpoint (`server/sms.ts`) | No | Defaults to `https://api.sms-gate.app/3rdparty/v1/messages` |
+| `SMS_GATEWAY_USERNAME` | Production Only | **Yes** | SMS Gateway Basic Auth username (`server/sms.ts`) | For SMS | Required to dispatch emergency/overdue SMS broadcasts |
+| `SMS_GATEWAY_PASSWORD` | Production Only | **Yes** | SMS Gateway Basic Auth password (`server/sms.ts`) | For SMS | Required to dispatch emergency/overdue SMS broadcasts |
+| `SMS_GATEWAY_DEVICE_ID` | Production Only | **Yes** | Bound Android gateway handset ID (`server/sms.ts`, `send-sms`) | For SMS | Required to target campus SIM handset fail-closed |
+| `SEND_SMS_HOOK_SECRET` | Supabase Edge / Local | **Yes** | Supabase `send-sms` Edge Function Standard Webhook verification | For Hook | Verifies webhook signatures when Send SMS hook is active |
+| `SMS_INTAKE_SIGNING_KEY` | Supabase Edge / Local | **Yes** | Android Gateway inbound `sms-intake` HMAC verification | For Intake | Verifies `X-Signature` on incoming `sms:received` events |
 
 > **Turnstile Architecture Note**: The Cloudflare Turnstile Secret Key is configured in the Supabase Dashboard under **Authentication > Bot Protection / CAPTCHA** for `signInAnonymously`. It is handled directly by Supabase Auth and is NEVER required or exposed in Vercel serverless runtime environments. Public Turnstile widget availability is reported via `/api/passes/capabilities` (`turnstile.siteKeyConfigured`).
 
@@ -43,8 +51,8 @@ Generic Vercel Preview deployments are protected by Vercel Deployment Protection
 Production Scope (egatepass.tech)
 ├─ Public / Non-sensitive configuration (APP_BASE_URL, VITE_SUPABASE_URL, SUPABASE_URL, etc.)
 └─ Full external provider credentials (SUPABASE_SECRET_KEY, RESEND_API_KEY, PASS_TOKEN_SECRET,
-     CRON_SECRET, RATE_LIMIT_HMAC_SECRET, RETURNING_MATCH_TOKEN_SECRET, RETURNING_VISITOR_TEMPLATE_KEY,
-     SEND_EMAIL_HOOK_SECRET, RESEND_WEBHOOK_SECRET)
+     CRON_SECRET, RATE_LIMIT_HMAC_SECRET, RETURNING_MATCH_TOKEN_SECRET, OFFICE_VISIT_HMAC_SECRET,
+     OFFICE_VISIT_DELIVERY_ENCRYPTION_KEY, SEND_EMAIL_HOOK_SECRET, RESEND_WEBHOOK_SECRET, SMS_GATEWAY_*)
 
 Generic Preview Scope (*.vercel.app)
 ├─ VITE_SUPABASE_URL
@@ -94,7 +102,8 @@ Each cryptographic purpose strictly requires its own dedicated environment varia
 - **`PASS_TOKEN_SECRET`**: Used solely to derive visitor QR bearer tokens (`createHmac('sha256', PASS_TOKEN_SECRET)`). Rotating this key invalidates unexpired active passes. Must be >= 32 characters.
 - **`RETURNING_MATCH_TOKEN_SECRET`**: Used exclusively for signing V3 actor-bound preview tokens and computing biometric match token digests. It NEVER falls back to `PASS_TOKEN_SECRET`. In Production, if missing or fewer than 32 characters, endpoints fail closed with HTTP 503.
 - **`RATE_LIMIT_HMAC_SECRET`**: Used exclusively for hashing client network identifiers in rate limiting. It NEVER falls back to `PASS_TOKEN_SECRET` or test strings. In Production, if missing or fewer than 32 characters, pass issuance and lookup fail closed with HTTP 503 `abuse_control_unavailable`.
-- **`RETURNING_VISITOR_TEMPLATE_KEY`**: Used exclusively for AES-256-GCM encryption and decryption of face embedding vectors at rest in `returning_visitor_profiles`. Must be a valid 32-byte 64-hex string.
+- **`RETURNING_VISITOR_TEMPLATE_KEY`**: Legacy 32-byte encryption key previously used when returning face embeddings were persisted. Persistent template storage has been retired in Migration 103 (`20261114000200`) and live verification compares transient RAM portraits directly against historical selfie uploads.
+- **SMS Gateway Credentials**: See [SMS_INTEGRATION.md](./SMS_INTEGRATION.md) for `SMS_GATEWAY_URL`, `SMS_GATEWAY_USERNAME`, `SMS_GATEWAY_PASSWORD`, `SMS_GATEWAY_DEVICE_ID`, `SEND_SMS_HOOK_SECRET`, and `SMS_INTAKE_SIGNING_KEY`.
 - **`OFFICE_VISIT_HMAC_SECRET`**: Used exclusively for signing portrait preview tokens and email challenge verification proof tokens in the office visit workflow (`server/lib/office.ts`). It NEVER falls back to other secrets. In Production, if missing or fewer than 32 characters, endpoints fail closed with HTTP 503.
 - **`OFFICE_VISIT_DELIVERY_ENCRYPTION_KEY`**: Used exclusively for authenticated AES-256-GCM encryption of raw QR bearer token payloads in `public.office_visit_email_outbox` (`server/lib/encryption.ts`). Guarantees zero plaintext pass tokens are stored in the database while enabling idempotent email retry. Must be a valid 32-byte (64-hex) key.
 
@@ -148,11 +157,11 @@ The platform bundles official Google Noto Sans fonts in `public/fonts/`:
 - `public/fonts/NotoSans-Bold.ttf`
 - `public/fonts/OFL.txt` (SIL Open Font License 1.1)
 
-In `vercel.json`, functions include these files via:
+In `vercel.json`, `api/passes/[...route].ts` bundles required assets via:
 ```json
   "functions": {
-    "api/**/*.ts": {
-      "includeFiles": "public/fonts/**"
+    "api/passes/[...route].ts": {
+      "includeFiles": "{public/earist-logo.png,public/fonts/**,server/models/**,node_modules/onnxruntime-node/bin/napi-v6/linux/x64/**}"
     }
   }
 ```

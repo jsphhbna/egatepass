@@ -196,9 +196,10 @@ describe('Documentation Truthfulness & Formatting Contract', () => {
     expect(bootstrapDoc).toContain('must_change_password');
     expect(bootstrapDoc).toContain('public.staff_profiles');
 
-    // Decommissioning truth
-    expect(bootstrapDoc).toContain('ON DELETE RESTRICT');
+    // Decommissioning & safe deletion lifecycle truth (Migration 20261123000800 -> ON DELETE CASCADE + /api/delete-user)
+    expect(bootstrapDoc).toContain('ON DELETE CASCADE');
     expect(bootstrapDoc).toContain('POST /api/update-user');
+    expect(bootstrapDoc).toContain('POST /api/delete-user');
     expect(bootstrapDoc).not.toContain('Success: User');
   });
 
@@ -308,16 +309,17 @@ describe('Documentation Truthfulness & Formatting Contract', () => {
     expect(backupDoc).toContain('INSTITUTIONAL POLICY REQUIRED');
   });
 
-  it('ensures documentation truthfully states no dedicated /api/health endpoint currently exists', () => {
+  it('ensures documentation truthfully documents /api/system/health while confirming no bare /api/health handler exists', () => {
     const instDoc = fs.readFileSync('docs/INSTITUTIONAL_DEPLOYMENT.md', 'utf8');
-    
-    expect(instDoc).toContain('No dedicated production health check endpoint');
+
+    expect(instDoc).toContain('GET /api/system/health');
     expect(instDoc).toContain('/api/health');
     expect(instDoc).toContain('FOLLOW-UP ENGINEERING REQUIRED');
 
-    // Confirm no /api/health source file was accidentally created
+    // Confirm no bare /api/health source file exists
     expect(fs.existsSync('api/health.ts')).toBe(false);
     expect(fs.existsSync('server/routes/health.ts')).toBe(false);
+    expect(fs.existsSync('server/routes/system/health.ts')).toBe(true);
   });
 
   it('ensures APP_BASE_URL is documented as the canonical origin for email branding in ENVIRONMENT.md and DEPLOYMENT.md', () => {
@@ -440,7 +442,7 @@ describe('Mermaid Rendering & Documentation Truthfulness Contract', () => {
   }, 30000);
 
   it('verifies exact inventory of active markdown files, files containing mermaid, and active mermaid blocks', () => {
-    expect(activeFiles.length, 'Expected exactly 26 active Markdown files').toBe(26);
+    expect(activeFiles.length, 'Expected exactly 24 active Markdown files').toBe(24);
     expect(archiveFiles.length, 'Expected exactly 12 archive Markdown files').toBe(12);
     expect(filesWithMermaid.length, 'Expected exactly 15 active Markdown files with Mermaid').toBe(15);
     expect(allActiveBlocks.length, 'Expected exactly 50 active Mermaid blocks').toBe(50);

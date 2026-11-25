@@ -30,7 +30,7 @@ const CANONICAL_ACRONYMS: Record<string, string> = {
   tvs: 'TVS',
 };
 
-export function formatVehicleName(raw: string): string {
+function formatVehicleName(raw: string): string {
   const trimmed = raw.trim();
   if (!trimmed) return '';
   const lower = trimmed.toLowerCase();
@@ -47,7 +47,7 @@ export function formatVehicleName(raw: string): string {
 }
 
 // Common Philippine-market makes fallback when vPIC is slow or offline
-export const POPULAR_PH_MAKES_FOUR_WHEEL = [
+const POPULAR_PH_MAKES_FOUR_WHEEL = [
   'Toyota',
   'Mitsubishi',
   'Honda',
@@ -70,7 +70,7 @@ export const POPULAR_PH_MAKES_FOUR_WHEEL = [
   'Mercedes-Benz',
 ];
 
-export const POPULAR_PH_MAKES_TWO_WHEEL = [
+const POPULAR_PH_MAKES_TWO_WHEEL = [
   'Honda',
   'Yamaha',
   'Kawasaki',
@@ -82,10 +82,7 @@ export const POPULAR_PH_MAKES_TWO_WHEEL = [
   'TVS',
 ];
 
-// Backwards compatibility export
-export const POPULAR_PH_MAKES = POPULAR_PH_MAKES_FOUR_WHEEL;
-
-export const POPULAR_PH_MODELS_BY_TYPE_AND_MAKE: Record<string, Record<string, string[]>> = {
+const POPULAR_PH_MODELS_BY_TYPE_AND_MAKE: Record<string, Record<string, string[]>> = {
   motorcycle: {
     Honda: ['Click 125', 'Click 160', 'Beat', 'PCX 160', 'ADV 160', 'Wave 110', 'XRM 125', 'Winner X'],
     Yamaha: ['NMAX', 'Aerox', 'Mio', 'Sniper 155', 'Mio Gravis', 'Fazzio'],
@@ -121,10 +118,7 @@ export const POPULAR_PH_MODELS_BY_TYPE_AND_MAKE: Record<string, Record<string, s
   },
 };
 
-// Backwards compatibility export
-export const POPULAR_PH_MODELS = POPULAR_PH_MODELS_BY_TYPE_AND_MAKE.four_wheel;
-
-export function mapInternalVehicleTypeToVpic(type?: string | null): string {
+function mapInternalVehicleTypeToVpic(type?: string | null): string {
   const norm = (type || '').toLowerCase().trim();
   switch (norm) {
     case 'car':

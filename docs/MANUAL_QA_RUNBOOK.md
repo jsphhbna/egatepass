@@ -89,29 +89,21 @@ stateDiagram-v2
 ```
 
 ### 3.1 Entry Scanner Device
-1. Log in at `/device/login` using Entry Scanner credentials (assigned to `Main Gate`).
-2. Present an `issued` QR code pass to the scanner camera.
+1. Log in at `/login` using Entry Scanner device credentials (assigned to `Main Gate`).
+2. Present an `issued` QR code pass (`source = 'portal'` or `'kiosk'`) to the scanner camera.
 3. **Expected State Transition**:
    - Entry device calls `POST /api/scan-pass` (mode: `entry`).
-   - Scanner displays: **Scan Accepted — Pending Guard Review**.
-   - Database pass status transitions from `issued` to `pending`.
+   - **Online Portal pass**: transitions directly `issued -> inside` (Scanner displays granted entry; visitor appears on Guard Station `/guard`).
+   - **Kiosk pass**: transitions `issued -> pending` (Scanner displays: **Scan Accepted — Pending Admin Review**).
 4. Scan the same QR code again immediately.
-   - **Expected**: Scanner displays warning that pass is already pending review.
+   - **Expected**: Scanner displays warning preventing duplicate entry.
 
-### 3.2 Guard Console Review
-1. Log in as `guard` at `/login`.
-2. Navigate to **Guard Console** (`/guard`).
-3. Confirm the scanned pass appears in the **Pending Entry** queue loaded via RPC `api.guard_dashboard_page` (snapshot/keyset queue paging).
-4. Inspect visitor selfie photo, captured valid ID, visit purpose, and destination (streamed via `GET /api/evidence?id=<evidence_id>`).
-5. Click **Approve Entry**:
-   - Route `POST /api/decide-visit` executes with `decision: 'approved'`.
-   - **Expected State Transition**: Pass status transitions from `pending` to `inside`.
-6. Alternatively, click **Reject Entry** and provide a reason (e.g. "Invalid ID", "Dress Code Violation"):
-   - Route `POST /api/decide-visit` executes with `decision: 'rejected'`.
-   - **Expected State Transition**: Pass status transitions from `pending` to `rejected`.
+### 3.2 Guard Station Feed (`/guard`) & Legacy Kiosk Review (`/admin/legacy-guard`)
+1. Log in as a `guard_station` device (or `admin` / `superadmin`) at `/login` and open `/guard` to verify live `portal` entries (`inside`/`exited`) and photo/vehicle evidence (`GET /api/evidence?id=<evidence_id>`).
+2. For legacy Kiosk `pending` passes, log in as `admin` or `superadmin` and open `/admin/legacy-guard` (uses RPC `api.guard_dashboard_page`), then test **Approve Entry** / **Reject Entry** (`POST /api/decide-visit` -> `inside` / `rejected`).
 
 ### 3.3 Exit Scanner Device
-1. Log in at `/device/login` using Exit Scanner credentials.
+1. Log in at `/login` using Exit Scanner credentials.
 2. Present a pass currently in `inside` status.
 3. **Expected State Transition**:
    - Exit device calls `POST /api/scan-pass` (mode: `exit`).
@@ -124,9 +116,9 @@ stateDiagram-v2
 
 ## 4. Administrative & Governance QA
 
-### 4.1 Admin Operations
-1. Log in as `admin`.
-2. **Staff Creation**: Invite a new Guard with a valid email via `POST /api/create-user`.
+### 4.1 Admin & Super Admin Staff Creation
+1. Log in as `superadmin`.
+2. **Staff Creation**: Invite a new Admin (`role: 'admin'`) with a valid email via `POST /api/create-user` (human `guard` creation is disabled; `office_staff` accounts are provisioned under `/admin/users?tab=directory`).
    - Confirm Supabase Auth user and `staff_profiles` row created (`active = true`).
    - Confirm invite email delivered via Resend with EARIST branding.
 3. **Device Management**: Register an Entry scanner device for "East Gate" via `POST /api/create-device`.
@@ -559,7 +551,7 @@ stateDiagram-v2
 6. Verify privacy notice displays configured retention days (`image_retention_days` and `visitor_retention_days`) rather than hardcoded numbers.
 
 ### 14.5 Visitor Records Date Range & Report Exports QA
-1. Navigate to **Visitor Records** (`/admin/records`).
+1. Navigate to **Visitor Records & Reports** (`/admin/visitors`).
 2. Test date presets: **Today**, **Last 7 Days**, **This Month**, and verify `From Date` and `To Date` populate with Asia/Manila calendar dates.
 3. Test **Reset Filters**: verify dates, status, and search reset and trigger a single root query.
 4. Test invalid range: set `From Date` after `To Date` and verify error toast without crashing.
@@ -567,7 +559,7 @@ stateDiagram-v2
    - **CSV**: Open downloaded file. Verify row 1 contains column headers and no decorative rows exist. Verify sensitive secrets (`qrToken`, `tokenDigest`, evidence paths) are absent.
    - **Excel**: Open `.xlsx` in spreadsheet viewer. Verify institutional header, filter metadata block, frozen table headers, and styled rows.
    - **PDF**: Open `.pdf`. Verify maroon banner header, applied filters, and formatted paginated table with page numbers.
-6. Repeat exports on **Admin Audit Logs** (`/admin/audit-logs`) for Visitor Activity and Administrative Activity.
+6. Repeat exports on **Admin Audit Logs** (`/admin/audit`) for Visitor Activity and Administrative Activity.
 
 ### 14.6 Guard Authoritative Search & Waiting-Time QA
 1. On Guard Console (`/guard`), verify live pending queue displays chronological oldest-first visitors without requiring a search.
@@ -708,26 +700,20 @@ stateDiagram-v2
    - Confirm login fails with: *"This legacy Guard account is disabled. Gate monitoring now uses a Guard Station device."*
    - Confirm the session is immediately signed out and the user is NOT redirected to `/guard`.
 3. **Guard Station Gate Monitoring**:
-   - Log into `/device/login` with a Guard Station device account (`device_type = 'guard_station'`).
-   - Observe the live entry feed displaying recent online visitor entries with full-bleed photos.
+   - Log into `/login` with a Guard Station device account (`device_type = 'guard_station'`).
+   - Observe the live entry feed (`/guard`) displaying recent online visitor entries with full-bleed photos.
 4. **Layout-Aware OCR Autofill**:
    - On `/get-pass`, upload a sample Philippine Driver's License or National ID during optional OCR.
    - Verify names are extracted without label corruption.
    - Verify existing entered fields are not overwritten.
    - Verify Driver's License comma format correctly assigns surname before comma, middle name to final token, and given name to preceding tokens.
 
-### 16.9 Mobile UX, Remember Me Enrollment & Returning Visitor 1:1 Verification QA (iPhone 12 Safari Checklist)
+### 16.9 Mobile UX & Returning Visitor 1:1 Ephemeral Verification QA (iPhone 12 Safari Checklist)
 1. **iPhone 12 Safari Device / Viewport Setup**:
    - Test device: iPhone 12 (or Mobile Safari viewport 390 × 844, devicePixelRatio: 3).
    - Ensure iOS Safari bottom toolbar or dynamic tab bar is enabled.
-2. **Prominent Remember Me Biometric Enrollment**:
-   - Navigate to `/get-pass` and complete New Visitor steps through to Review.
-   - Confirm the institutional enrollment card ("Remember me for faster future visits") is visible immediately below the Biometric Identity Verified badge before scrolling into visitor information summaries.
-   - Verify visual elements: EARIST maroon border (`#7A0A0A`), amber "Optional" badge, 28px custom checkbox, 16px title, 14px description.
-   - Tap anywhere on the card surface to toggle: confirm state changes cleanly between checked (maroon/amber gradient) and unchecked (neutral white surface).
-   - Tap directly on the 28px checkbox: confirm it does not double-toggle.
-   - If bringing a vehicle, confirm the "Save this vehicle to my profile" sub-option appears within the card when checked.
-   - Complete pass issuance: confirm pass generates normally and toast confirms profile enrollment.
+2. **Returning Profile Linkage Without Persistent Face Templates**:
+   - Navigate to `/get-pass` and verify no `rememberVisitor` biometric template enrollment card appears (returning profile lookup matches against historical portrait uploads without storing templates).
 3. **iPhone Email Delivery Modal & Non-Overlapping Skip Warning**:
    - On the delivery step after pass generation, open the Email Pass modal.
    - Confirm the iOS virtual keyboard DOES NOT open automatically on modal mount (no autoFocus popup obscuring modal buttons).
@@ -738,13 +724,13 @@ stateDiagram-v2
    - Wait for 5-second countdown on skip warning: tap "Continue Without Email" to confirm skip and proceed to completed pass screen.
 4. **Returning Visitor 7-Stage Capture, Freeze, Review & Verify Workflow**:
    - Navigate to `/get-pass` and select "I Am a Returning Visitor".
-   - Search for an enrolled name (e.g. registered during New Visitor test). Select the masked candidate profile.
+   - Search for an existing profile name and secondary verification detail. Select the masked candidate profile.
    - Tap "Proceed to Live Face Verification":
      - *Stage 1 (Live)*: Confirm live camera view starts inside the guided oval with "Capture Your Selfie" heading and "Capture Selfie" action. Verify NO network or biometric calls occur during live camera stream.
      - *Stage 2 (Freeze)*: Tap "Capture Selfie". Confirm live video immediately stops, camera stream closes, and the captured frame remains frozen on screen.
      - *Stage 3 (Review)*: Confirm heading changes to "Review Your Selfie" with two prominent actions: "Retake Photo" and "Verify This Photo" (both `min-h-[56px]`).
      - *Retake Check*: Tap "Retake Photo". Confirm frozen photo is discarded, object URL revoked, webcam restarts, and UI returns to live stage. Tap "Capture Selfie" again.
-     - *Stage 4 (Verify)*: Tap "Verify This Photo". Confirm loading overlay appears ("Verifying facial identity…"), client-side quality evaluation runs, photo is uploaded to upload intent, and single 1:1 biometric comparison request is sent.
+     - *Stage 4 (Verify)*: Tap "Verify This Photo". Confirm loading overlay appears ("Verifying facial identity…"), client-side quality evaluation runs, and the transient selfie buffer is transmitted in-memory via multipart payload to `/api/passes/identify-returning` (never uploaded to Supabase Storage).
      - *Stage 5 (Match Accepted)*: Confirm matching returns profile, pre-fills form, advances to `returning_confirm`, and displays "Welcome back, [First Name]!" toast. Verify the verified photo blob is reused for subsequent pass issuance.
      - *Stage 6 (Match Rejected / Low Quality)*: If an unmatching face is presented, confirm UI displays "We could not verify this photo" error alert near frozen image with a prominent "Retake Selfie" button without navigating away or losing candidate profile.
 
@@ -752,7 +738,7 @@ stateDiagram-v2
 
 ---
 
-## 11. Office Visit Management, Pre-Approval & Gate Scanner Audio Feedback Verification
+## 17. Office Visit Management, Pre-Approval & Gate Scanner Audio Feedback Verification
 
 ### 11.1 General vs Specific-Person Choice & Accidental Selection Safeguard
 1. Navigate to `/get-pass` on desktop or mobile.
@@ -791,8 +777,8 @@ stateDiagram-v2
    - Tap **Reject**: Confirm dialog requires a mandatory rejection reason (rejection cannot submit with empty reason). Submit rejection; confirm visitor receives polite rejection email detailing reason.
    - On another request, tap **Approve**: Confirm request is approved, QR pass is generated atomically, and visitor receives an EARIST-branded approval email with an embedded high-contrast QR pass attachment.
 
-### 11.4 Gate Entry & In-Person Office Arrival Confirmation
-1. Simulate gate entry scan with the approved pass QR token at `/scanner` (Entry Scanner).
+### 17.4 Gate Entry & In-Person Office Arrival Confirmation
+1. Simulate gate entry scan with the approved pass QR token at `/scan/entry` (Entry Scanner).
 2. Confirm pass status transitions to `inside` and Web Audio plays a pleasant rising two-tone success chime (880 Hz to 1175 Hz).
 3. Return to `/office`: Confirm the visit appears in `Awaiting Office Confirmation` with an active pulsing amber badge.
 4. When visitor arrives at the physical office desk, staff taps **Confirm Arrival**:
@@ -800,26 +786,26 @@ stateDiagram-v2
    - Confirm the record immediately moves to the `Currently at Office` queue.
    - Confirm attempting to confirm arrival before campus gate entry is strictly rejected with a clear message: *"Arrival can only be confirmed after the visitor has successfully entered campus through the gate."*
 
-### 11.5 Exit Scanner Audio Feedback & Departure Safety
+### 17.5 Exit Scanner Audio Feedback & Departure Safety
 1. **Normal Exit (Arrival Confirmed)**:
-   - Visitor scans QR pass at `/exit-scan`.
+   - Visitor scans QR pass at `/scan/exit`.
    - Confirm pass status transitions to `exited` and attendance transitions to `completed`.
    - Confirm scanner plays rising two-tone success chime.
 2. **Unconfirmed Departure Safety**:
-   - A visitor who entered campus but never had their arrival confirmed at the destination office scans at `/exit-scan`.
+   - A visitor who entered campus but never had their arrival confirmed at the destination office scans at `/scan/exit`.
    - **Safety Invariant**: Physical gate exit is **NEVER blocked or delayed** (`ok: true`, pass status updates to `exited`).
    - **Warning Feedback**:
      - Scanner plays an alternating dual-tone warning pulse (587 Hz to 440 Hz).
      - Guard console surfaces an amber warning banner: *"Office Arrival Not Confirmed — Departure recorded as attendance exception."*
      - Visit record transitions to `exited_unconfirmed` and logs an `unconfirmed_exit` event in `office_visit_events`.
 3. **Scanner Audio Mute Controls**:
-   - Tap the speaker icon in the header of `/scanner` or `/exit-scan`.
+   - Tap the speaker icon in the header of `/scan/entry` or `/scan/exit`.
    - Confirm icon updates to muted speaker (`Audio: Muted`) and subsequent scans execute silently.
    - Refresh the browser; confirm mute preference persists via `localStorage`.
 
 ---
 
-## 12. Institutional Calendar, Office Governance & Address Extraction QA Runbook
+## 18. Institutional Calendar, Office Governance & Address Extraction QA Runbook
 
 ### 12.1 Campus Calendar Closures
 1. **Superadmin Closure Creation**:
@@ -860,8 +846,8 @@ stateDiagram-v2
    - Confirm an "Address Detected from ID" suggestion card appears showing parsed Barangay, Municipality, Province, and Region.
    - Click **Use Detected Address**; confirm fields prefill seamlessly without manual typing while preserving user editability.
 
-### 12.5 Emergency Device, Office Lifecycle, Inactivity Timeout & Retention Freeze QA
-1. **Emergency Device Offline Lifecycle (`/device/emergency` & `/admin/records?mode=offline`)**:
+### 18.5 Emergency Device, Office Lifecycle, Inactivity Timeout & Retention Freeze QA
+1. **Emergency Device Offline Lifecycle (`/emergency-device` & `/admin/visitors?tab=offline`)**:
    - Register an `emergency_device` bound to a physical gate, log in online to download a signed 24-hour ECDSA P-256 manifest, disconnect network, record a walk-in visitor confirming physical ID visual inspection (zero selfies, zero ID uploads, zero QR issuance), reconnect, sync, and verify Admin reconciliation marks the entry `OFFLINE MODE RECORDED`.
 2. **Office Governance Lifecycle & Pre-Approval Toggle (`/admin/users?tab=directory` & `/get-pass`)**:
    - Create an office (`Draft`), verify it stays hidden on `/get-pass`, click **Publish** (becomes selectable), toggle per-office **Pre-Approval** policy (`requires_approval_before_pass`), verify unused draft deletion succeeds (`Delete Draft`) while active/published offices require archival (`Archive`), and inspect `expectedGate` display on `/office`.
@@ -870,9 +856,14 @@ stateDiagram-v2
 4. **Global Retention Freeze, Period Analytics & Interactive Campus Calendar**:
    - Enable `global_retention_freeze` in **System Settings** with a reason and verify manual/scheduled purge halts cleanly; test **Dashboard** period modes (`today`, `date`, `month`, `year`, `range`) and CSV/XLSX/PDF export completeness; verify month/year calendar closure planning, overlap warnings, draft delete, and archive lifecycle.
 
+### 18.6 Permanent Staff/Office Deletion, End-of-Day Accountability & SMS Broadcast QA
+1. **Permanent Account Deletion**: Deactivate & decommission a disposable test admin account, then permanently remove it via **Delete Account** (`POST/DELETE /api/delete-user`); confirm historical `audit_events` remain intact with anonymized/null attribution while the email becomes reusable.
+2. **End-of-Day Accountability Reports (`/admin/visitors?tab=reports`)**: Verify unconfirmed exits, unconfirmed office arrivals, and combined cases display cleanly and resolve via `api.resolve_visitor_accountability`.
+3. **SMS Gateway Test Alert (`/admin/settings`)**: Trigger a single-number SMS test alert and confirm `accepted_by_gateway` / `sms_logs` mask phone numbers properly (`docs/SMS_INTEGRATION.md`).
+
 ---
 
-## 13. Physical Hardware Verification Disclaimer
+## 19. Physical Hardware Verification Disclaimer
 
 > **MANDATORY PHYSICAL HARDWARE NOTICE**:
 > Physical hardware peripherals in the EARIST campus environment (specifically: the physical MXW01 Bluetooth thermal printer, dedicated physical hardware 2D barcode scanners, and physical iPhone 12 Safari camera hardware) are marked `NOT TESTED (PHYSICAL HARDWARE)` in verification reports because software execution environments cannot physically connect to local Bluetooth radios or physical optics. All corresponding software contracts, Web Bluetooth communication protocols, Web Audio synthesis pipelines, and responsive mobile viewports are fully tested and proven in automated verification suites.

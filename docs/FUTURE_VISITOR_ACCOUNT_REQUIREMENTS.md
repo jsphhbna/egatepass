@@ -7,7 +7,7 @@
 
 ## 1. Context & Scope Boundary
 
-E-GatePass visitor registration intentionally creates ephemeral visitor passes and does not establish reusable visitor profiles or accounts. The current institutional public registration flow operates without requiring visitor accounts.
+E-GatePass visitor registration intentionally avoids end-user visitor login accounts (passwords, profile portals, or self-service sessions). While the system maintains operational `public.returning_visitor_profiles` and `public.returning_visitor_vehicles` records internally to streamline repeat check-ins via lookup + ephemeral 1:1 face verification, visitors do not create personal login accounts.
 
 This document records the future requirements and institutional constraints if EARIST later decides to introduce optional reusable visitor accounts.
 

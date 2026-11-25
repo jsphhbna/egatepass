@@ -67,7 +67,7 @@ Before merging to `main` or triggering a production deployment:
      ```bash
      npx vercel build --prod
      ```
-   - Confirm `.vercel/output/functions/api/auth/[...route].func/server/templates/index.js` was generated and contains all 9 templates.
+   - Confirm `.vercel/output/functions/api/auth/[...route].func/server/templates/index.js` was generated and contains all 12 React Email templates (`server/templates/index.ts`).
 
 ---
 
@@ -77,19 +77,25 @@ Configure environment variables in your Vercel Project Settings (**Settings > En
 
 | Variable | Scope | Secret? | Purpose / Value Description |
 |---|---|---|---|
+| `APP_BASE_URL` | Production, Preview, Dev | No | Canonical public application origin (`https://egatepass.tech`) for email branding |
 | `VITE_SUPABASE_URL` | Production, Preview, Dev | No | Supabase public API endpoint (e.g. `https://xyz.supabase.co`) |
 | `VITE_SUPABASE_PUBLISHABLE_KEY` | Production, Preview, Dev | No | Supabase publishable browser key (current format uses `sb_publishable_...`; intentionally public and safe for browser use when RLS is enforced) |
 | `VITE_TURNSTILE_SITE_KEY` | Production, Dev | No | Cloudflare Turnstile public widget site key (Production-only in Vercel) |
 | `SUPABASE_URL` | Production, Preview, Dev | No | Supabase server URL (same as `VITE_SUPABASE_URL`) |
 | `SUPABASE_SECRET_KEY` | **Production Only** | **Yes** | Supabase service-role key (bypasses RLS for privileged backend operations) |
 | `PASS_TOKEN_SECRET` | **Production Only** | **Yes** | Cryptographic secret (min 32 chars) for HMAC signing of QR pass bearers |
+| `RETURNING_MATCH_TOKEN_SECRET` | **Production Only** | **Yes** | Dedicated secret (min 32 chars) for returning visitor candidate/match tokens |
+| `RETURNING_FACE_THRESHOLD_MODE` | Production, Dev | No | `provisional` (default) or `calibrated` for returning visitor 1:1 matching |
 | `RATE_LIMIT_HMAC_SECRET` | **Production Only** | **Yes** | Dedicated cryptographic key (min 32 chars) for client IP rate-limit HMAC |
 | `CRON_SECRET` | **Production Only** | **Yes** | Shared bearer secret for authenticating retention maintenance requests |
+| `OFFICE_VISIT_HMAC_SECRET` | **Production Only** | **Yes** | Dedicated secret (min 32 chars) for office portrait preview & email verification proofs |
+| `OFFICE_VISIT_DELIVERY_ENCRYPTION_KEY` | **Production Only** | **Yes** | 32-byte (64-hex) AES-256-GCM key for encrypted office delivery outbox |
 | `RESEND_API_KEY` | **Production Only** | **Yes** | API key from Resend dashboard (`re_...`) |
 | `RESEND_FROM_EMAIL` | Production, Dev | No | Authoritative sender address: `EARIST E-GatePass <notifications@egatepass.tech>` |
 | `SEND_EMAIL_HOOK_SECRET` | **Production Only** | **Yes** | Secret for Supabase Auth Standard Webhook signature verification |
 | `RESEND_WEBHOOK_SECRET` | **Production Only** | **Yes** | Secret for Resend Delivery Webhook standard signature verification |
 | `EMERGENCY_MANIFEST_SIGNING_PRIVATE_KEY` | Production, Dev | **Yes** | Optional PKCS#8 ECDSA P-256 override for Emergency Device signed manifests (auto-managed in DB when unset) |
+| `SMS_GATEWAY_URL`, `SMS_GATEWAY_USERNAME`, `SMS_GATEWAY_PASSWORD`, `SMS_GATEWAY_DEVICE_ID` | **Production Only** | **Yes** | Cloud Android SMS Gateway credentials and bound device ID (`docs/SMS_INTEGRATION.md`) |
 
 > **PREVIEW ENVIRONMENT ISOLATION RULE**: Production privileged server secrets (`SUPABASE_SECRET_KEY`, `PASS_TOKEN_SECRET`, `RATE_LIMIT_HMAC_SECRET`, `CRON_SECRET`, `RESEND_API_KEY`, `SEND_EMAIL_HOOK_SECRET`, `RESEND_WEBHOOK_SECRET`) MUST NEVER be injected into generic Vercel Preview environments. Generic Preview environments are SSO-protected and receive only public frontend configuration.
 
@@ -165,6 +171,8 @@ When migrating or updating the production origin:
 3. Update **Redirect URLs** to include all authorized paths:
    - `https://gatepass.example.edu/reset-password`
    - `https://gatepass.example.edu/login`
+   - `https://gatepass.example.edu/auth/verified`
+   - `https://gatepass.example.edu/verified`
    - `https://gatepass.example.edu/**`
 4. **Critical Distinction**: Local `supabase/config.toml` settings are development-only and do **NOT** govern the hosted Supabase production project. Operators must verify settings in the live Supabase dashboard.
 

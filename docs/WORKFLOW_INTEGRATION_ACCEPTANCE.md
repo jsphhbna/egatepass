@@ -70,15 +70,15 @@ This document serves as the authoritative integration closure and verification c
               │
               ▼
 [ Admin & Super Admin Consoles: /admin ]
-              ├── Realtime Dashboard: GET /api/admin/dashboard
-              ├── Visitor Records: GET /api/admin/records
-              ├── Device Management: GET /api/admin/devices, POST /api/create-device, POST /api/update-device, DELETE /api/delete-device
-              ├── User Management: GET /api/admin/users, POST /api/create-user, POST /api/update-user, POST /api/decommission-user
+              ├── Realtime Dashboard: GET /api/admin/dashboard (/admin)
+              ├── Visitor Records & Reports: GET /api/admin/records (/admin/visitors)
+              ├── Device Management: GET /api/admin/devices, POST /api/create-device, POST /api/update-device, DELETE /api/delete-device (/admin/devices)
+              ├── User & Office Management: GET /api/admin/users, POST /api/create-user, POST /api/update-user, POST /api/decommission-user, POST /api/delete-user, /api/admin/offices (/admin/users)
               ├── Staff Kiosk Approval: POST /api/decide-visit (/admin/legacy-guard)
-              ├── System Settings: GET /api/admin/settings, POST /api/update-settings
-              ├── Emergency Evacuation Snapshot: GET /api/admin/emergency
-              ├── Incident Holds: GET /api/admin/holds
-              └── Audit Logs: GET /api/admin/activity
+              ├── System Settings & SMS: GET/POST /api/admin/settings, POST /api/update-settings, /api/admin/sms (/admin/settings)
+              ├── Emergency Evacuation Snapshot: GET /api/admin/emergency (/admin/emergency)
+              ├── Incident Holds: GET/POST /api/admin/holds (/admin/visitors)
+              └── Audit Logs & Reconciliation: GET /api/admin/activity, GET/POST /api/reconciliation-items (/admin/audit)
 ```
 
 ---
@@ -119,7 +119,7 @@ This document serves as the authoritative integration closure and verification c
 | Stage | Subsystem | Endpoint / Event | Source & Target Roles | State Transition | Security & Privacy Boundary | Verification Evidence |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **1. Visitor Registration** | Online Portal (`/get-pass`) | `POST /api/passes/issue` | Anonymous visitor -> API Service | `null` -> `issued` | Turnstile token check; PSGC reference validation; stores SHA-256 token digest. | **PASS** (Playwright + Vitest) |
-| **1b. Returning Visitor Enrollment** | Pass Issuance (`/api/passes/issue`) | `POST /api/passes/issue` | Anonymous visitor -> API Service | `issued` -> `issued` (Pass preserved) | Atomic single-transaction RPC `api.enroll_returning_visitor_v1` (profile, template, visitor link verification where `ROW_COUNT === 1`, optional vehicle); pass issuance survives enrollment failure. | **PASS** (`tests/returning-enrollment-atomicity.test.ts`) |
+| **1b. Returning Visitor Profile Linkage (Ephemeral Mode)** | Pass Issuance (`/api/passes/issue`) | `POST /api/passes/issue` | Anonymous visitor -> API Service | `issued` -> `issued` (Pass preserved) | Automatic `returning_visitor_profiles` and optional vehicle linkage during `api.issue_online_pass_v6` (persistent `returning_face_templates` / `api.enroll_returning_visitor_v1` later retired in Migration 103). | **PASS** (`tests/returning-enrollment-atomicity.test.ts` historical + `tests/returning-visitor-privacy-hardening.test.ts`) |
 | **2. Returning Biometrics & ID Preview** | Online Portal (`/get-pass`) | `POST /api/passes/identify-returning`, `GET /api/passes/returning-id-preview` | Anonymous visitor -> API Service | 1:1 Biometric Verification & Direct ID Streaming | Cosine similarity thresholding (SFace reference >= 0.363); HMAC matchToken digest fail-closed check; direct binary streaming from private `visitor-ids` storage with `Cache-Control: private, no-store, max-age=0` and single-use token binding. | **PASS** (`tests/returning-visitor.test.ts`, `tests/returning-id-preview-endpoint.test.ts`) |
 | **3. Address & Locality State** | Cascading Selector | Pure Resolution Hook | Client React State | Locality restored / preserved | `src/lib/psgcAddressResolution.ts` pure state machine preserves locality selection; exact active barangay precedence and fail-closed PSGC reference resolution; postal code collection removed from visitor UI while database columns remain backward-compatible for historical records. | **PASS** (Playwright + Vitest + `tests/psgc-alias-and-postal-integrity.test.ts`) |
 | **4. Gate Entry Scan** | Entry Scanner (`/scan/entry`) | `POST /api/scan-pass` | Entry Device (`device_type = entry`) -> API | `issued` -> `inside` (Portal) OR `issued` -> `pending` (Kiosk) | Device session auth; token digest verification; prevents replay; atomic vehicle duplicate entry lock. | **PASS** (Vitest unit + PGlite DB RPC) |
@@ -128,7 +128,7 @@ This document serves as the authoritative integration closure and verification c
 | **7. Photo Inspection** | Guard Station (`/guard`) | `GET /api/evidence?id=...` | Guard Station Device -> API | Photo delivery | Strictly delivers `photo` and `vehicle_photo` for active/exited visits at gate; Government ID (`id_document`) returns 403. | **PASS** (Contract tested in PGlite) |
 | **8. Gate Exit Scan** | Exit Scanner (`/scan/exit`) | `POST /api/scan-pass` | Exit Device (`device_type = exit`) -> API | `inside` -> `exited` | Exit device auth; gate match validation (`wrong_gate` check); sets `time_out` and vehicle exit timestamps. | **PASS** (PGlite contract test) |
 | **9. Kiosk Approval** | Legacy Guard Console (`/admin/legacy-guard`) | `POST /api/decide-visit` | Staff Administrator (`role in admin, superadmin`) -> API | `pending` -> `inside` (Approved) OR `pending` -> `rejected` | Ordinary guard station accounts deprecated from approval; requires authenticated staff administrator. | **PASS** (Migration 41 & 42 tests) |
-| **10. Admin Console** | Admin (`/admin/dashboard`, `/admin/records`, etc.) | Specific `/api/admin/*` routes | Authenticated Admin / Super Admin | Realtime read / write / export | Role-based access control; immutable audit logging on sensitive operations. | **PASS** (TypeScript build + unit) |
+| **10. Admin Console** | Admin (`/admin`, `/admin/visitors`, `/admin/audit`, `/admin/settings`) | Specific `/api/admin/*` routes | Authenticated Admin / Super Admin | Realtime read / write / export / SMS | Role-based access control; immutable audit logging on sensitive operations. | **PASS** (TypeScript build + unit) |
 
 ---
 
@@ -147,7 +147,7 @@ Rather than a generic query endpoint, the administrative console communicates th
 - **Automated Image Purge & Retention:** `POST /api/purge-images`, `POST /api/admin/retention-maintenance`
 - **Kiosk Pass Review & Decision:** `POST /api/decide-visit` (Admin / Super Admin role required)
 - **Returning Visitor ID Document Preview:** `GET /api/passes/returning-id-preview` (direct binary streaming from private storage bucket `visitor-ids` with `Cache-Control: private, no-store, max-age=0` and single-use preview token validation)
-- **Atomic Returning Enrollment:** `api.enroll_returning_visitor_v1` transactional RPC invoked during pass issuance in `server/routes/passes/issue.ts`
+- **Returning Visitor Profile Linkage:** Handled within `api.issue_online_pass_v6` inside `server/routes/passes/issue.ts` without storing persistent face embeddings (`returning_face_templates` and `api.enroll_returning_visitor_v1` retired in Migration 103).
 - **Email Pass Delivery & Verification:** `POST /api/passes/email` (actions: `request_code`, `verify_and_send`; provider acceptance status `sent_to_provider` truthfully presented as submitted to provider rather than mailbox delivery; modal close transitions cleanly to the issued pass screen)
 - **Nominatim Rate Limiter Security Lockdown:** `api.acquire_nominatim_slot` locked down with `search_path = ''`, bounds `1,000ms <= interval <= 5,000ms`, revoked from `public, anon, authenticated`, and restricted to `service_role`
 
@@ -158,7 +158,7 @@ Rather than a generic query endpoint, the administrative console communicates th
 | Test Suite File | Feature & Scope Covered | Declared Tests | Test Type | Invariants Proven |
 | :--- | :--- | :--- | :--- | :--- |
 | `tests/entry-scan-feedback.test.ts` | Production scanner response mapping ([`src/lib/entryScanFeedback.ts`](../src/lib/entryScanFeedback.ts)) | 13 | Unit | Proves `inside` -> `granted`, `pending` -> `pending`, unknown/missing statuses fail closed to `error`, timeouts & network failures provide proper operator guidance. |
-| `tests/returning-visitor-address-hardening.test.ts` | PSGC normalization, reference validation, postal code reconstruction, profile persistence | 58 | Integration / Unit | Proves PSGC 10-digit locality normalization, fail-closed persistence in `issue.ts`, honest PHLPost provenance, and same-locality manual override preservation. |
+| `tests/returning-visitor-address-hardening.test.ts` | PSGC normalization, reference validation, and profile persistence | 58 | Integration / Unit | Proves PSGC 10-digit locality normalization, fail-closed persistence in `issue.ts`, and same-locality manual override preservation (historical postal tests retired cleanly in Migration 103). |
 | `tests/returning-visitor.test.ts` | Returning visitor biometric, cryptographic, configuration, and related utility behavior | 20 | Unit / Integration | Proves 1:1 biometric threshold readiness, provisional vs calibrated cosine matching, AES-256-GCM embedding encryption/decryption, Manila business date calculation, safety ceilings, token digest verification, and cryptographic utilities. |
 | `tests/returning-visitor-lookup.test.ts` | Returning visitor profile lookup & privacy masking | 7 | Integration | Proves method enforcement (405), token auth (401), payload validation (400), non-anonymous session rejection (403), rate-limiting (429), and candidate masking without leaking plaintext PII. |
 | `tests/returning-visitor-provisional-workflow.test.ts` | Provisional enrollment activation, capabilities & 1:1 cosine matching | 8 | Integration | Proves decoupled enrollment readiness, key length guards, verification secret guards, candidate masking, 1:1 cosine similarity matching, low-quality/multi-face rejection (422), and expired/revoked profile rejection. |
@@ -168,7 +168,7 @@ Rather than a generic query endpoint, the administrative console communicates th
 | `tests/returning-enrollment-atomicity.test.ts` | Returning visitor enrollment pre-checks and transactional RPC execution | 7 | Unit / Integration | Proves fail-closed pre-checks (UUID pass_id, visitor existence, actor ownership, null returning profile check), atomic single-transaction execution via api.enroll_returning_visitor_v1, duplicate key error handling, and pass issuance preservation invariant. |
 | `tests/email-pass-modal-interaction.test.ts` | EmailPassModal interaction lifecycle & truthful delivery semantics | 5 | Component Interaction (Happy-DOM) | Proves Done/View My E-GatePass button triggers both completion and close callbacks, resets internal state on modal reopen, enforces truthful Resend submission wording, and keeps kiosk delivery optional. |
 | `tests/guard-station-device.test.ts` | Guard Station feed criteria, gate confinement, keyset pagination | 13 | Integration (PGlite + API) | Proves Asia/Manila current calendar day filtering, gate scoping, `status IN ('inside', 'exited')`, and cursor pagination without row duplication. |
-| `tests/migration-chain-pglite.test.ts` | PostgreSQL schema migrations (000100 through 20261104000600 — 56 migrations) | 27 | Database Contract (PGlite) | Proves sequential migration execution, RPC signatures, RLS policies, least-privilege table grants, D1-D10 credential triggers, pass status enums, upload intent storage cleaning tracking, Manila PSGC reconciliation, returning visitor enrollment atomicity, and security hardening/nominatim slot lockdown. |
+| `tests/migration-chain-pglite.test.ts` | PostgreSQL schema migrations (`000100` through `20261125000100` — 135 migrations) | 49+ | Database Contract (PGlite) | Proves sequential migration execution, RPC signatures, RLS policies, least-privilege table grants, D1-D10 credential triggers, pass status enums, office visits, SMS quotas, permanent deletions, and accountability reconciliation. |
 | `tests/e2e/returning-visitor-address-prefill.spec.ts` | Returning visitor address flow with mocked API responses | 3 | Browser E2E with mocked API responses (Playwright) | Proves browser-level Welcome Back address hydration, manual postal override synchronization, selector modal re-selection preservation, and pass issuance payload serialization using mocked API routes. |
 
 ---
@@ -186,7 +186,7 @@ This checklist documents verification status across all system requirements, cle
 | **AC-05** | Entry Scanner reflects pending status for kiosk passes | Entry Scanner (`/scan/entry`) | Vitest Unit (Shared Helper) | **PASS** | Verified in `tests/entry-scan-feedback.test.ts`. `pending` resolves to `'pending'` (amber). |
 | **AC-06** | Entry Scanner fails closed on unrecognized status | Entry Scanner (`/scan/entry`) | Vitest Unit (Shared Helper) | **PASS** | Verified in `tests/entry-scan-feedback.test.ts`. Unrecognized status resolves to `'error'`. |
 | **AC-07** | Optical camera QR scanning on physical Android / iOS handheld | Entry Scanner (`/scan/entry`) | Physical Smartphone / Scanner Tablet | **NOT TESTED (PHYSICAL HARDWARE)** | Barcode decoder verified via synthetic stream; requires on-site testing on physical gate hardware rig. |
-| **AC-08** | Physical ESC/POS thermal receipt printing at kiosk | Kiosk Portal (`/kiosk`) | Physical USB / Network Thermal Printer | **NOT TESTED (PHYSICAL HARDWARE)** | Thermal printer canvas and ESC/POS raster generation verified via unit tests; requires physical printer. |
+| **AC-08** | Physical thermal receipt printing at kiosk | Kiosk Portal (`/kiosk`) | Physical MXW01 Web Bluetooth Thermal Printer (58mm / 384px) + browser print fallback | **NOT TESTED (PHYSICAL HARDWARE)** | Thermal printer canvas and 384px monochrome raster generation verified via unit tests; requires on-site validation with physical MXW01 hardware. |
 | **AC-09** | Mobile WebKit / Safari layout & touch interactions | iPhone 12, iOS 27 Safari | Playwright Mobile WebKit Emulation | **PASS (EMULATION)** | Responsive layout and touch targets verified via Playwright WebKit emulation. Physical iPhone 12 testing is **NOT TESTED (PHYSICAL HARDWARE)**. |
 | **AC-10** | Guard Station live feed updates on pass entry | Guard Station (`/guard`) | Vitest + PostgreSQL PGlite | **PASS (AUTOMATED)** | Proved in `tests/guard-station-device.test.ts` (Asia/Manila date and gate filtering via 4s polling). Real-world security booth continuous operation is **NOT TESTED (PHYSICAL HARDWARE)**. |
 | **AC-11** | Guard Station photo evidence access control | Guard Station (`/guard`) | Vitest + PGlite DB Contract | **PASS** | `/api/evidence` strictly permits `photo` and `vehicle_photo` and blocks government ID retrieval. |

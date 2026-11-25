@@ -58,7 +58,7 @@ flowchart LR
 |---|---|---|
 | **Frontend** | React 19, TypeScript, Vite 8 | Single Page Application (SPA), responsive mobile/tablet interfaces |
 | **Hosting & CDN** | Vercel | Global edge CDN delivery and frontend asset hosting |
-| **Serverless API** | Vercel Functions (Node.js 24) | 31 canonical API endpoints across 6 route groups, verification, and cryptography |
+| **Serverless API** | Vercel Functions (Node.js 24) | 6 grouped Serverless Functions hosting 42 core contract endpoints (`server/route-map.ts`) plus mounted office, returning, location, vehicle, and SMS routes |
 | **Database** | Supabase PostgreSQL | Authoritative relational data, Row Level Security (RLS), and RPCs |
 | **Authentication** | Supabase Auth | Anonymous visitor sessions, staff identities, and managed device credentials |
 | **Object Storage** | Supabase Storage (Private) | Private storage for visitor photos (`visitor-photos`) and IDs (`visitor-ids`) |
@@ -126,10 +126,10 @@ flowchart TD
 
 #### 3.1.1 Official PSGC Structured Residential Address System
 
-Online visitor registration collects standardized Philippine residential locality data using official Philippine Statistics Authority (PSA) PSGC reference data and PHLPost postal codes, completely retiring legacy map tiles and GPS permissions:
-- **Official Reference Data**: Comprehensive snapshot of all 18 administrative regions (including Negros Island Region / NIR), 82 provinces, cities, municipalities, and barangays using official 10-digit codes (`text` representation).
+Online visitor registration collects standardized Philippine residential locality data using official Philippine Statistics Authority (PSA) PSGC reference data, completely retiring legacy map tiles, GPS permissions, and postal code fields:
+- **Official Reference Data**: Comprehensive snapshot of all administrative regions (including Negros Island Region / NIR), provinces, cities, municipalities, and barangays using official 10-digit codes (`text` representation) plus bundled datasets in `data/reference/psgc/*.json`.
 - **Shopee-Style Cascading Selector**: A compact modal (desktop) and bottom sheet (mobile) that shows only the active selection step (`Region` -> `Province` [automatically bypassed for NCR] -> `City/Municipality` -> `Barangay` -> `Confirmation`).
-- **Postal Code Resolution**: Automatic determination of PHLPost postal codes for exact barangay matches (e.g. Barangay 408 / EARIST Nagtahan -> `1008`) and unique cities (e.g. Mandaluyong -> `1550`, Malolos -> `3000`), with manual fallback for multi-code areas.
+- **Postal Code Decommissioning**: PHLPost postal code lookups and inputs have been retired from visitor UI, issuance requests, and hydration (`requested_postal_code: null` in `api.issue_online_pass_v6`; Migration 103 retired historical mappings).
 - **Zero Third-Party APIs**: Pure database-backed and bundled reference execution requiring no Geoapify key, Google Maps key, or runtime geocoding services.
 - **Server Verification**: Validated server-side in `api.issue_online_pass_v6` with immutable address snapshot fields stored on the visitor record.
 
@@ -218,7 +218,10 @@ stateDiagram-v2
 
 ---
 
-### 3.4 Gate Entry & Guard Review Sequence
+### 3.4 Gate Entry, Guard Station Feed & Legacy Kiosk Review
+
+- **Online Portal Passes (`source = 'portal'`)**: Scanning at an active Entry Scanner (`/scan/entry`, `POST /api/scan-pass`) validates `token_digest` & gate and immediately transitions valid passes `issued -> inside`. Dedicated Guard Station hardware terminals (`/guard`, `GET /api/guard-station-feed`) display live portal entrants and stream portrait/vehicle photos via `GET /api/evidence?id={uuid}`.
+- **Kiosk Walk-In Passes (`source = 'kiosk'`)**: Entry scans transition kiosk passes `issued -> pending`, where authenticated Admin/Super Admin staff review them on `/admin/legacy-guard` (`api.guard_dashboard_page` + `POST /api/decide-visit` -> `inside` or `rejected`). Human `guard` login accounts remain deprecated (`legacy_guard_role_disabled`).
 
 ```mermaid
 sequenceDiagram
@@ -226,30 +229,28 @@ sequenceDiagram
     participant E as Entry Scanner
     participant API as Vercel API
     participant DB as Supabase DB
-    participant G as Guard Console
+    participant GS as Guard Station (/guard)
+    participant A as Admin (/admin/legacy-guard)
     participant X as Exit Scanner
 
     V->>E: Present QR Code
     E->>API: POST /api/scan-pass (mode: entry)
     API->>DB: RPC api.scan_pass (verify token_digest & gate)
-    DB-->>API: Valid issued pass
-    API-->>E: Scan Accepted (Status: Pending Guard Review)
+    alt Portal Pass
+        DB-->>API: Transition issued -> inside
+        GS->>API: GET /api/guard-station-feed
+        GS->>API: GET /api/evidence?id={uuid}
+    else Kiosk Walk-In Pass
+        DB-->>API: Transition issued -> pending
+        A->>DB: RPC api.guard_dashboard_page (pending queue)
+        A->>API: POST /api/decide-visit (approved / rejected)
+    end
 
-    G->>DB: RPC api.guard_dashboard_page (snapshot/keyset queue page)
-    DB-->>G: Visitor details & photo evidence references
-    G->>API: GET /api/evidence?id={uuid}
-    API-->>G: Stream photo evidence securely
-    G->>API: POST /api/decide-visit (decision: approved / rejected)
-    API->>DB: RPC api.decide_visit (atomic transition to inside/rejected)
-    DB-->>G: Decision confirmed
-
-    Note over V,G: Visitor conducts on-campus business
+    Note over V,GS: Visitor conducts on-campus business
 
     V->>X: Present QR Code at gate exit
     X->>API: POST /api/scan-pass (mode: exit)
-    API->>DB: RPC api.scan_pass (verify status == inside)
-    API->>DB: Atomic transition status -> exited
-    DB-->>X: Exit Verified (Gate opens)
+    API->>DB: RPC api.scan_pass (verify status == inside -> exited)
 ```
 
 ---
@@ -386,29 +387,26 @@ Unified Pass Presentation Model (createPassPresentation)
 
 ---
 
-### 3.9 Guard Visitor Recovery & Offline Outage Operations
+### 3.9 Emergency Device Offline Operations & Visitor Accountability
 
-When network connectivity or cloud services are temporarily unavailable, campus access control enforces fail-closed edge boundaries with Guard operational authority:
+During cloud or campus WAN outages, dedicated **`emergency_device`** terminals (`/emergency-device`) handle fail-closed offline intake, while online connectivity resumes sync for administrative reconciliation:
 
 ```text
 Cloud Connectivity Outage
    │
-   ├── KIOSK         ──> UNAVAILABLE (Proceed to Guard Notice)
-   ├── ENTRY SCANNER ──> UNAVAILABLE (Proceed to Guard Notice)
-   ├── EXIT SCANNER  ──> UNAVAILABLE (Proceed to Guard Notice)
+   ├── KIOSK / SCANNER  ──> UNAVAILABLE (Fail-closed; direct to Emergency Device)
    │
-   └── GUARD TABLET  ──> OFFLINE OPERATIONAL FALLBACK
+   └── EMERGENCY DEVICE ──> OFFLINE GATE INTAKE (/emergency-device)
            │
-           ├── Visitor Recovery (Search Local Manila Cache)
-           ├── Offline Intake (Manual Details, Photo & ID)
-           ├── Local Outbox (IndexedDB Event Queue)
-           └── Reconnection Sync (Atomic Idempotent RPCs)
+           ├── Signed Manifest Verification (ECDSA P-256 24h lease)
+           ├── Encrypted Local Vault (AES-GCM IndexedDB)
+           └── Reconnection Sync ──> Classified "OFFLINE MODE RECORDED" (/admin/visitors)
 ```
 
-- **Fail-Closed Scanner Behavior**: Kiosks and gate scanners refuse registrations and scans during network outages, clearly directing visitors to the Guard rather than falsely labeling passes as invalid or forged.
-- **Guard Recovery**: For registered visitors without a QR code (dead phone, lost email), Guards search today's active Manila passes by name, contact, or reference, review protected evidence, and manually record entry or exit.
-- **Offline Registration & Storage**: Guards perform physical walk-in intake offline, capturing visitor details, photo selfie, and ID evidence into a client-side IndexedDB store. Zero server secrets or raw signing keys are stored client-side.
-- **Safe Reconciliation**: Upon reconnection, offline registrations and event outbox entries synchronize idempotently via database row locking (`FOR UPDATE`) and conflict detection (`reconciliation_tasks`).
+- **Fail-Closed Scanner Behavior**: Kiosks and gate scanners refuse registrations and scans during network outages rather than issuing unverified passes.
+- **Emergency Device Continuity**: `emergency_device` terminals operate offline with gate-scoped 24-hour ECDSA P-256 manifests and AES-GCM IndexedDB vaults; synced records are classified `OFFLINE MODE RECORDED` (`POST /api/gate/emergency-device`, `/admin/visitors?tab=offline`) for Admin reconciliation and are never auto-converted into QR passes.
+- **End-of-Day Visitor Accountability & Reconciliation**: Within **Super Admin -> Search & Records** (`/admin/visitors?tab=reports`), administrators monitor incomplete visit records after operating hours (`api.get_accountability_summary` & `api.resolve_visitor_accountability` — campus exit missing, office arrival unconfirmed, or both) and record verified resolutions.
+- **SMS Alerts & Gateway Limitations**: Admins/Super Admins can send campus-wide emergency roll-call or overdue-exit SMS warnings via Cloud Android Gateway (`api.sms-gate.app`, `POST /api/admin/sms?action=send`). See [docs/SMS_INTEGRATION.md](docs/SMS_INTEGRATION.md) for quota caps, `accepted_by_gateway` semantics, and physical handset requirements.
 
 ---
 
@@ -463,20 +461,19 @@ Visitor Portal (/get-pass)
 
 ### Capability Authority Matrix
 
-| Capability | Office Staff | Guard Station | Admin | Super Admin | Kiosk Device | Legacy Guard |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|
-| Dedicated Office Portal (`/office`) | ✅ | ❌ | ✅ | ✅ | ❌ | ❌ |
-| Decide Specific Visit (Approve/Reject) | ✅ | ❌ | ✅ | ✅ | ❌ | ❌ |
-| Confirm Office Arrival | ✅ | ❌ | ✅ | ✅ | ❌ | ❌ |
-| Live gate entry monitoring | ❌ | ✅ | ✅ | ✅ | ❌ | ❌ |
-| Visitor Recovery (Manual Entry/Exit) | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ |
-| Walk-in / offline registration (`guard_offline`) | ❌ | ❌ | ✅ | ✅ (Emergency) | ❌ | ❌ |
-| Offline approve/reject | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ |
-| Offline time-in/time-out | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ |
-| MXW01 Bluetooth connection | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ |
-| Printer test | ❌ | ❌ | ❌ | Preview only | ✅ | ❌ |
-| Edit thermal template | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ |
-| Publish thermal template | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ |
+| Capability | Office Staff | Guard Station | Emergency Device | Admin | Super Admin | Kiosk Device | Legacy Guard |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| Dedicated Office Portal (`/office`) | ✅ | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ |
+| Decide Specific Visit (Approve/Reject) | ✅ | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ |
+| Confirm Office Arrival | ✅ | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ |
+| Live gate entry monitoring (`/guard`) | ❌ | ✅ | ❌ | ✅ | ✅ | ❌ | ❌ |
+| Emergency offline intake (`/emergency-device`) | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Visitor Recovery / Legacy Kiosk Review | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ |
+| Offline incident / record reconciliation | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ |
+| Permanent staff/office lifecycle management | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ |
+| MXW01 Bluetooth connection | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ |
+| Printer test | ❌ | ❌ | ❌ | ❌ | Preview only | ✅ | ❌ |
+| Edit & publish thermal template | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ |
 
 > **Physical Hardware Verification Notice**: Physical device testing (MXW01 Bluetooth thermal printer, physical barcode scanners, physical iPhone 12 Safari camera) is marked `NOT TESTED (PHYSICAL HARDWARE)` as physical peripherals require physical campus deployment verification.
 
@@ -532,19 +529,19 @@ egatepass/
 │
 ├── src/                                # React frontend SPA
 │   ├── components/                     # Reusable UI & modal components
-│   ├── pages/                          # Page views (Portal, Kiosk, Guard, Admin)
-│   ├── services/                       # Client services (visitorRegistration, guard)
-│   └── lib/                            # Scheduling, OCR, and Supabase client
+│   ├── pages/                          # Page views (Portal, Kiosk, Entry/Exit Scan, Guard, Emergency Device, Office, Account Security, Admin)
+│   ├── services/                       # Client services (visitorRegistration, guard, auth, incidentHold)
+│   └── lib/                            # Scheduling, OCR, PSGC, print templates, and Supabase client
 │
-├── scripts/
-│   └── bundle-email-templates.mjs      # Prebuild React Email bundling script
+├── scripts/                            # Build, asset sync, dataset, calibration & verification scripts
 │
 ├── supabase/
 │   ├── migrations/                     # Sequential PostgreSQL migrations
+│   ├── functions/                      # Deno Edge Functions (send-sms, sms-intake)
 │   └── config.toml                     # Supabase CLI configuration
 │
-├── tests/                              # Unit, contract, and migration test suite
-└── docs/                               # Detailed operational & security specifications
+├── tests/                              # Vitest unit/contract/migration suites & Playwright E2E specs
+└── docs/                               # Detailed operational, security & architecture specifications
 ```
 
 ---
@@ -552,38 +549,39 @@ egatepass/
 ## 7. Local Development Quick-Start
 
 ### Prerequisites
-- **Node.js**: Node.js 24.x recommended (LTS)
+- **Node.js**: Node.js 24.x (`engines.node` in `package.json`)
 - **Package Manager**: npm
 
-### Setup
+### Setup & Verification Commands
 ```bash
-# 1. Clone the repository
+# 1. Clone and install dependencies
 git clone https://github.com/jsphhbna/egatepass.git
 cd egatepass
-
-# 2. Install dependencies
 npm install
 
-# 3. Configure local environment
+# 2. Configure local environment
 cp .env.example .env.local
-# Update .env.local with your Supabase development credentials
+# Update .env.local with your development credentials
 
-# 4. Start local development server
+# 3. Start local development server
 npm run dev
 
-# 5. Run automated test suite
+# 4. Run typechecks, unit/integration suite, contracts, and doc checks
+npm run typecheck:client
+npm run typecheck:api
 npm test
+npm run test:contracts
+npm run test:docs
+npm run test:migrations
 
-# 6. Verify production build & email bundle
+# 5. Build production bundle (syncs OCR assets, email bundle, build-meta)
 npm run build
-npx vercel build --prod
 ```
 
 ---
 
-
 ### Environment & Secret Isolation Policy
-- **Production Scope**: Contains all privileged provider credentials (`SUPABASE_SECRET_KEY`, `PASS_TOKEN_SECRET`, `RATE_LIMIT_HMAC_SECRET`, `CRON_SECRET`, `RESEND_API_KEY`, `SEND_EMAIL_HOOK_SECRET`, `RESEND_WEBHOOK_SECRET`).
+- **Production Scope**: Contains all privileged provider credentials (`SUPABASE_SECRET_KEY`, `PASS_TOKEN_SECRET`, `RETURNING_MATCH_TOKEN_SECRET`, `RATE_LIMIT_HMAC_SECRET`, `OFFICE_VISIT_HMAC_SECRET`, `OFFICE_VISIT_DELIVERY_ENCRYPTION_KEY`, `CRON_SECRET`, `RESEND_API_KEY`, `SEND_EMAIL_HOOK_SECRET`, `RESEND_WEBHOOK_SECRET`, `SMS_GATEWAY_USERNAME`, `SMS_GATEWAY_PASSWORD`, `SMS_GATEWAY_DEVICE_ID`).
 - **Generic Preview Scope**: Protected by Vercel SSO; receives ONLY public frontend configuration (`VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_URL`). Production privileged secrets are never copied into generic preview deployments.
 
 ---
@@ -609,6 +607,8 @@ EARIST E-GatePass is designed with clear architectural boundaries separating log
 | [docs/KIOSK_HARDWARE.md](docs/KIOSK_HARDWARE.md) | Kiosk hardware specs, tablet/camera requirements, browser printing, and future hardware boundary |
 | [docs/SECURITY.md](docs/SECURITY.md) | Canonical security contract, trust boundaries, actor resolution, and threat matrix |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | In-depth engineering specifications, relational entity models, and data flows |
+| [docs/SYSTEM_DIAGRAMS.md](docs/SYSTEM_DIAGRAMS.md) | 10 academic/system engineering diagrams and architecture specifications |
+| [docs/SMS_INTEGRATION.md](docs/SMS_INTEGRATION.md) | Cloud Android SMS Gateway architecture, quotas, Edge Functions, and operational limits |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Vercel deployment, migration ordering, Send Email Hook setup, and rollback |
 | [docs/OPERATIONS.md](docs/OPERATIONS.md) | Daily administration, staff/device lifecycle, incident holds, and reconciliation |
 | [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md) | Authoritative environment variable table and secret rotation rules |

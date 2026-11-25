@@ -31,4 +31,3 @@ export function getTrustedClientIp(request: Request): string | null {
  * Alias for getTrustedClientIp matching codebase naming conventions.
  */
 export const extractTrustedClientIp = getTrustedClientIp;
-export const getClientIp = getTrustedClientIp;
